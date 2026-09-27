@@ -1,3 +1,4 @@
+// ClipManiaLatam GitHub write access verified
 const http = require("http");
 const crypto = require("crypto");
 
