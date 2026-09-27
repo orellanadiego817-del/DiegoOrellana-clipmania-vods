@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node index.js"
   },
+  "dependencies": {
+    "uuid": "^9.0.0"
+  },
   "engines": {
     "node": ">=20"
   }
 }
+
