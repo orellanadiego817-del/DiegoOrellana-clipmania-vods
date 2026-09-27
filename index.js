@@ -326,6 +326,14 @@ const server = http.createServer(async (req, res) => {
       `);
     }
 
+    if (req.method === "GET" && route === "/tiktokY4wi1FGE9XVbzYMKevge6oCmtXAz0LYb.txt") {
+      res.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=300"
+      });
+      return res.end("tiktok-developers-site-verification=Y4wi1FGE9XVbzYMKevge6oCmtXAz0LYb");
+    }
+
     if (req.method === "GET" && route === "/tiktok") {
       if (!tiktokConfigured()) {
         return page(res, "TikTok", `
