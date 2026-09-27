@@ -77,7 +77,7 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
-
+  const path = req.url.split("?")[0];
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     return res.end();
@@ -111,7 +111,7 @@ const server = http.createServer(async (req, res) => {
     `);
   }
 
-  if (req.url === "/terminos") {
+  if (path === "/terminos" || path === "/terminos/") {
     return page(res, "Términos de Servicio", `
       <h1>Términos de Servicio</h1>
 
@@ -159,7 +159,7 @@ const server = http.createServer(async (req, res) => {
     `);
   }
 
-  if (req.url === "/privacidad") {
+  if (path === "/privacidad" || path === "/privacidad/") {
     return page(res, "Política de Privacidad", `
       <h1>Política de Privacidad</h1>
 
