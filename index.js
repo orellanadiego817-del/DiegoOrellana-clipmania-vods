@@ -558,6 +558,19 @@ const server = http.createServer(async (req, res) => {
               });
               const data=await r.json();
               result.textContent=JSON.stringify(data,null,2);
+              if(data.ok && data.publish_id){
+                result.textContent += "\n\n⏳ TikTok está procesando el video. Consultando estado...";
+                for(let i=0;i<12;i++){
+                  await new Promise(resolve=>setTimeout(resolve,5000));
+                  const sr=await fetch("/api/tiktok/publish/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({publish_id:data.publish_id})});
+                  const sd=await sr.json();
+                  result.textContent=JSON.stringify(sd,null,2);
+                  const status=sd?.data?.status;
+                  if(status==="PUBLISH_COMPLETE" || status==="FAILED"){
+                    break;
+                  }
+                }
+              }
             }catch(err){result.textContent="Error: "+err.message;}
           });
         </script>
