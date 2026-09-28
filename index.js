@@ -241,7 +241,7 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
   return result.data;
 }
 
-async async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLevel, disableComment, disableDuet, disableStitch }) {
+async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLevel, disableComment, disableDuet, disableStitch }) {
   const info = await creatorInfo();
   const allowed = info.data?.privacy_level_options || [];
   if (!privacyLevel) throw new Error("Debes seleccionar un nivel de privacidad");
