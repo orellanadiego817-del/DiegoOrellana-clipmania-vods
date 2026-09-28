@@ -2,6 +2,7 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { pipeline } = require("stream/promises");
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://diegoorellana-clipmania-vods-production.up.railway.app").replace(/\/$/, "");
@@ -240,7 +241,107 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
   return result.data;
 }
 
-async function publishStatus(publishId) {
+async async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLevel, disableComment, disableDuet, disableStitch }) {
+  const info = await creatorInfo();
+  const allowed = info.data?.privacy_level_options || [];
+  if (!privacyLevel) throw new Error("Debes seleccionar un nivel de privacidad");
+  if (!allowed.includes(privacyLevel)) {
+    throw new Error("El nivel de privacidad no está permitido por la cuenta de TikTok");
+  }
+
+  const stat = await fs.promises.stat(filePath);
+  const videoSize = stat.size;
+  if (!videoSize) throw new Error("El archivo de video está vacío");
+  if (videoSize > 4 * 1024 * 1024 * 1024) throw new Error("El video supera el máximo de 4 GB");
+
+  const chunkSize = videoSize < 5 * 1024 * 1024 ? videoSize : 10 * 1024 * 1024;
+  const totalChunkCount = Math.ceil(videoSize / chunkSize);
+
+  const token = await getAccessToken();
+  const initPayload = {
+    post_info: {
+      title: String(title || "").slice(0, 2200),
+      privacy_level: privacyLevel,
+      disable_comment: Boolean(disableComment),
+      disable_duet: Boolean(disableDuet),
+      disable_stitch: Boolean(disableStitch)
+    },
+    source_info: {
+      source: "FILE_UPLOAD",
+      video_size: videoSize,
+      chunk_size: chunkSize,
+      total_chunk_count: totalChunkCount
+    }
+  };
+
+  const init = await tiktokRequest("https://open.tiktokapis.com/v2/post/publish/video/init/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=UTF-8"
+    },
+    body: JSON.stringify(initPayload)
+  });
+
+  if (!init.response.ok || init.data.error?.code && init.data.error.code !== "ok") {
+    throw new Error(init.data.error?.message || init.data.error?.code || "TikTok rechazó el inicio de la publicación");
+  }
+
+  const publishId = init.data.data?.publish_id;
+  const uploadUrl = init.data.data?.upload_url;
+  if (!publishId || !uploadUrl) throw new Error("TikTok no devolvió publish_id/upload_url");
+
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    let offset = 0;
+    for (let index = 0; index < totalChunkCount; index++) {
+      const currentSize = Math.min(chunkSize, videoSize - offset);
+      const buffer = Buffer.allocUnsafe(currentSize);
+      let read = 0;
+      while (read < currentSize) {
+        const result = await handle.read(buffer, read, currentSize - read, offset + read);
+        if (!result.bytesRead) throw new Error("No se pudo leer el archivo de video");
+        read += result.bytesRead;
+      }
+
+      const lastByte = offset + currentSize - 1;
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": mimeType,
+          "Content-Length": String(currentSize),
+          "Content-Range": `bytes ${offset}-${lastByte}/${videoSize}`
+        },
+        body: buffer
+      });
+      if (!uploadResponse.ok) {
+        const uploadText = await uploadResponse.text();
+        throw new Error(`TikTok rechazó el bloque ${index + 1}/${totalChunkCount}: ${uploadText.slice(0, 500)}`);
+      }
+      offset += currentSize;
+    }
+  } finally {
+    await handle.close();
+  }
+
+  publishJobs.set(publishId, {
+    createdAt: Date.now(),
+    videoUrl: null,
+    title: String(title || ""),
+    source: "FILE_UPLOAD"
+  });
+
+  return {
+    publish_id: publishId,
+    upload_complete: true,
+    creator: {
+      username: info.data?.creator_username || null,
+      nickname: info.data?.creator_nickname || null
+    }
+  };
+}
+
+function publishStatus(publishId) {
   const token = await getAccessToken();
   const result = await tiktokRequest("https://open.tiktokapis.com/v2/post/publish/status/fetch/", {
     method: "POST",
@@ -382,6 +483,69 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
+    if (req.method === "GET" && route === "/tiktok/publish") {
+      if (!requireTikTokConfig(res)) return;
+      if (!tiktokTokens?.access_token) {
+        return page(res, "Publicar en TikTok", `
+          <h1>Publicar en TikTok</h1>
+          <p class="warn">Primero conecta TikTok.</p>
+          <p><a href="/tiktok"><button>Conectar TikTok</button></a></p>
+        `);
+      }
+      let info;
+      try { info = await creatorInfo(); } catch (error) {
+        return page(res, "Publicar en TikTok", `<h1>Publicar en TikTok</h1><p class="warn">${escapeHtml(error.message)}</p>`);
+      }
+      const d = info.data || {};
+      const options = Array.isArray(d.privacy_level_options) ? d.privacy_level_options : [];
+      const duration = Number(d.max_video_post_duration_sec || 0);
+      return page(res, "Publicar en TikTok", `
+        <h1>Publicar video en TikTok</h1>
+        <p><strong>Cuenta:</strong> ${escapeHtml(d.creator_nickname || d.creator_username || "TikTok")}</p>
+        <p>Duración máxima informada: ${duration ? duration + " segundos" : "no disponible"}</p>
+        <form id="publishForm">
+          <p><label>Video<br><input id="video" type="file" accept="video/mp4,video/quicktime,video/webm" required></label></p>
+          <p><label>Título/caption<br><textarea id="title" maxlength="2200" rows="4" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:8px;padding:8px" placeholder="Escribe el texto para TikTok"></textarea></label></p>
+          <p><label>Privacidad<br><select id="privacy" required><option value="">Selecciona una opción</option>${options.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("")}</select></label></p>
+          <p>Interacciones (ninguna está activada por defecto):</p>
+          <p><label><input id="comment" type="checkbox" ${d.comment_disabled ? "disabled" : ""}> Permitir comentarios</label></p>
+          <p><label><input id="duet" type="checkbox" ${d.duet_disabled ? "disabled" : ""}> Permitir Duet</label></p>
+          <p><label><input id="stitch" type="checkbox" ${d.stitch_disabled ? "disabled" : ""}> Permitir Stitch</label></p>
+          <p><label><input id="consent" type="checkbox" required> Confirmo que quiero enviar este video a mi cuenta de TikTok.</label></p>
+          <button id="submit" type="submit">Publicar en TikTok</button>
+        </form>
+        <pre id="result" style="white-space:pre-wrap"></pre>
+        <script>
+          const form=document.getElementById("publishForm");
+          const result=document.getElementById("result");
+          form.addEventListener("submit",async(e)=>{
+            e.preventDefault();
+            const file=document.getElementById("video").files[0];
+            const privacy=document.getElementById("privacy").value;
+            if(!file||!privacy||!document.getElementById("consent").checked)return;
+            if(file.size>4*1024*1024*1024){result.textContent="El video supera 4 GB.";return;}
+            result.textContent="Enviando video a TikTok...";
+            const qs=new URLSearchParams({
+              title:document.getElementById("title").value,
+              privacy_level:privacy,
+              disable_comment:String(!document.getElementById("comment").checked),
+              disable_duet:String(!document.getElementById("duet").checked),
+              disable_stitch:String(!document.getElementById("stitch").checked)
+            });
+            try{
+              const r=await fetch("/api/tiktok/publish-file?"+qs.toString(),{
+                method:"POST",
+                headers:{"Content-Type":file.type||"video/mp4","X-File-Name":encodeURIComponent(file.name)},
+                body:file
+              });
+              const data=await r.json();
+              result.textContent=JSON.stringify(data,null,2);
+            }catch(err){result.textContent="Error: "+err.message;}
+          });
+        </script>
+      `);
+    }
+
     if (req.method === "GET" && route === "/api/tiktok/status") {
       return json(res, 200, {
         ok: true,
@@ -396,6 +560,53 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && route === "/api/tiktok/creator") {
       if (!requireTikTokConfig(res)) return;
       return json(res, 200, { ok: true, ...(await creatorInfo()) });
+    }
+
+    if (req.method === "POST" && route === "/api/tiktok/publish-file") {
+      if (!requireTikTokConfig(res)) return;
+      if (!tiktokTokens?.access_token) return json(res, 401, { ok: false, error: "TikTok no está conectado" });
+
+      const contentType = String(req.headers["content-type"] || "").split(";")[0].toLowerCase();
+      const allowedTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+      if (!allowedTypes.has(contentType)) {
+        return json(res, 400, { ok: false, error: "Formato no permitido. Usa MP4, MOV o WebM." });
+      }
+
+      const maxBytes = 4 * 1024 * 1024 * 1024;
+      const declared = Number(req.headers["content-length"] || 0);
+      if (declared && declared > maxBytes) {
+        return json(res, 413, { ok: false, error: "El video supera 4 GB" });
+      }
+
+      ensureDataDir();
+      const tempDir = path.join(DATA_DIR, "tmp");
+      fs.mkdirSync(tempDir, { recursive: true });
+      const tempPath = path.join(tempDir, crypto.randomUUID() + ".video");
+
+      let received = 0;
+      const out = fs.createWriteStream(tempPath, { flags: "wx" });
+      try {
+        req.on("data", chunk => {
+          received += chunk.length;
+          if (received > maxBytes) req.destroy();
+        });
+        await pipeline(req, out);
+        if (!received) return json(res, 400, { ok: false, error: "No se recibió ningún video" });
+
+        const q = parsed.searchParams;
+        const title = q.get("title") || "";
+        const privacyLevel = q.get("privacy_level") || "";
+        const result = await publishVideoFileToTikTok(tempPath, contentType, {
+          title,
+          privacyLevel,
+          disableComment: q.get("disable_comment") === "true",
+          disableDuet: q.get("disable_duet") === "true",
+          disableStitch: q.get("disable_stitch") === "true"
+        });
+        return json(res, 200, { ok: true, ...result });
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
     }
 
     if (req.method === "POST" && route === "/api/tiktok/publish") {
