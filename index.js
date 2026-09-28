@@ -5,10 +5,10 @@ const path = require("path");
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://diegoorellana-clipmania-vods-production.up.railway.app").replace(/\/$/, "");
-const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || "";
-const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || "";
-const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI || BASE_URL + "/auth/tiktok/callback";
-const TIKTOK_SCOPES = process.env.TIKTOK_SCOPES || "user.info.basic,video.publish";
+const TIKTOK_CLIENT_KEY = String(process.env.TIKTOK_CLIENT_KEY || "").trim();
+const TIKTOK_CLIENT_SECRET = String(process.env.TIKTOK_CLIENT_SECRET || "").trim();
+const TIKTOK_REDIRECT_URI = String(process.env.TIKTOK_REDIRECT_URI || (BASE_URL + "/auth/tiktok/callback")).trim();
+const TIKTOK_SCOPES = String(process.env.TIKTOK_SCOPES || "user.info.basic,video.publish").trim();
 
 const vods = new Map();
 const oauthStates = new Map();
