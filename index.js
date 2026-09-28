@@ -236,7 +236,16 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
   });
 
   if (!result.response.ok || result.data.error?.code && result.data.error.code !== "ok") {
-    throw new Error(result.data.error?.message || result.data.error?.code || "TikTok rechazó la publicación");
+    const e = result.data.error || {};
+    const detail = JSON.stringify({
+      http_status: result.response.status,
+      code: e.code || null,
+      message: e.message || null,
+      log_id: e.log_id || null
+    });
+    const error = new Error(e.message || e.code || "TikTok rechazó la publicación");
+    error.tiktok = detail;
+    throw error;
   }
   return result.data;
 }
@@ -284,7 +293,16 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
   });
 
   if (!init.response.ok || init.data.error?.code && init.data.error.code !== "ok") {
-    throw new Error(init.data.error?.message || init.data.error?.code || "TikTok rechazó el inicio de la publicación");
+    const e = init.data.error || {};
+    const detail = JSON.stringify({
+      http_status: init.response.status,
+      code: e.code || null,
+      message: e.message || null,
+      log_id: e.log_id || null
+    });
+    const error = new Error(e.message || e.code || "TikTok rechazó el inicio de la publicación");
+    error.tiktok = detail;
+    throw error;
   }
 
   const publishId = init.data.data?.publish_id;
@@ -697,7 +715,11 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { ok: false, error: "Ruta no encontrada" });
   } catch (error) {
     console.error(error);
-    return json(res, 500, { ok: false, error: error.message || "Error interno" });
+    const payload = { ok: false, error: error.message || "Error interno" };
+    if (error.tiktok) {
+      try { payload.tiktok = JSON.parse(error.tiktok); } catch { payload.tiktok = error.tiktok; }
+    }
+    return json(res, 500, payload);
   }
 });
 
