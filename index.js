@@ -536,13 +536,59 @@ const server = http.createServer(async (req, res) => {
         <script>
           const form=document.getElementById("publishForm");
           const result=document.getElementById("result");
+          const submit=document.getElementById("submit");
+
+          function show(message){
+            result.textContent=String(message||"");
+          }
+
+          async function readJsonResponse(response){
+            const raw=await response.text();
+            let data;
+            try{ data=JSON.parse(raw); }
+            catch{ data={ok:false,error:"El servidor devolvió una respuesta que no es JSON.",http_status:response.status,raw:raw.slice(0,1000)}; }
+            if(!response.ok && data.ok!==false) data.ok=false;
+            if(!response.ok) data.http_status=response.status;
+            return data;
+          }
+
+          async function checkPublishStatus(publishId){
+            for(let i=1;i<=18;i++){
+              show("⏳ TikTok recibió la solicitud. Consultando estado ("+i+"/18)...\n\npublish_id: "+publishId);
+              await new Promise(resolve=>setTimeout(resolve,5000));
+              const sr=await fetch("/api/tiktok/publish/status",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({publish_id:publishId})
+              });
+              const sd=await readJsonResponse(sr);
+              const status=sd?.data?.status || sd?.status || null;
+              show(JSON.stringify(sd,null,2)+"\n\nEstado detectado: "+(status||"pendiente"));
+              if(status==="PUBLISH_COMPLETE"){
+                show("✅ PUBLICADO EN TIKTOK\n\n"+JSON.stringify(sd,null,2));
+                return;
+              }
+              if(status==="FAILED"){
+                show("❌ TIKTOK RECHAZÓ O FALLÓ LA PUBLICACIÓN\n\n"+JSON.stringify(sd,null,2));
+                return;
+              }
+            }
+            show("⚠️ TikTok aceptó el envío, pero todavía no confirmó el resultado después de 90 segundos.\n\nEl publish_id es: "+publishId+"\n\n"+result.textContent);
+          }
+
           form.addEventListener("submit",async(e)=>{
             e.preventDefault();
             const file=document.getElementById("video").files[0];
             const privacy=document.getElementById("privacy").value;
-            if(!file||!privacy||!document.getElementById("consent").checked)return;
-            if(file.size>4*1024*1024*1024){result.textContent="El video supera 4 GB.";return;}
-            result.textContent="Enviando video a TikTok...";
+            if(!file){show("❌ Selecciona un video.");return;}
+            if(!privacy){show("❌ Selecciona el nivel de privacidad.");return;}
+            if(!document.getElementById("consent").checked){show("❌ Confirma que quieres enviar el video.");return;}
+            if(file.size>4*1024*1024*1024){show("❌ El video supera 4 GB.");return;}
+
+            submit.disabled=true;
+            submit.textContent="Enviando...";
+            show("📤 Preparando envío de "+file.name+" ("+(file.size/1024/1024).toFixed(1)+" MB) a TikTok...");
+
             const qs=new URLSearchParams({
               title:document.getElementById("title").value,
               privacy_level:privacy,
@@ -550,28 +596,31 @@ const server = http.createServer(async (req, res) => {
               disable_duet:String(!document.getElementById("duet").checked),
               disable_stitch:String(!document.getElementById("stitch").checked)
             });
+
             try{
               const r=await fetch("/api/tiktok/publish-file?"+qs.toString(),{
                 method:"POST",
                 headers:{"Content-Type":file.type||"video/mp4","X-File-Name":encodeURIComponent(file.name)},
                 body:file
               });
-              const data=await r.json();
-              result.textContent=JSON.stringify(data,null,2);
-              if(data.ok && data.publish_id){
-                result.textContent += "\n\n⏳ TikTok está procesando el video. Consultando estado...";
-                for(let i=0;i<12;i++){
-                  await new Promise(resolve=>setTimeout(resolve,5000));
-                  const sr=await fetch("/api/tiktok/publish/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({publish_id:data.publish_id})});
-                  const sd=await sr.json();
-                  result.textContent=JSON.stringify(sd,null,2);
-                  const status=sd?.data?.status;
-                  if(status==="PUBLISH_COMPLETE" || status==="FAILED"){
-                    break;
-                  }
-                }
+              const data=await readJsonResponse(r);
+
+              if(!data.ok){
+                show("❌ NO SE ENVIÓ A TIKTOK\n\n"+JSON.stringify(data,null,2));
+                return;
               }
-            }catch(err){result.textContent="Error: "+err.message;}
+
+              const publishId=data.publish_id;
+              show("✅ TikTok aceptó el envío inicial.\n\npublish_id: "+(publishId||"no devuelto")+"\n\n"+JSON.stringify(data,null,2));
+
+              if(publishId) await checkPublishStatus(publishId);
+              else show("⚠️ El servidor respondió correctamente, pero TikTok no devolvió publish_id. No se puede confirmar la publicación.");
+            }catch(err){
+              show("❌ ERROR DE CONEXIÓN O DEL NAVEGADOR\n\n"+err.message);
+            }finally{
+              submit.disabled=false;
+              submit.textContent="Publicar en TikTok";
+            }
           });
         </script>
       `);
