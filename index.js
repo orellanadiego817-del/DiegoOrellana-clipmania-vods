@@ -341,7 +341,7 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
   };
 }
 
-function publishStatus(publishId) {
+async function publishStatus(publishId) {
   const token = await getAccessToken();
   const result = await tiktokRequest("https://open.tiktokapis.com/v2/post/publish/status/fetch/", {
     method: "POST",
