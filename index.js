@@ -203,7 +203,7 @@ async function creatorInfo() {
   return result.data;
 }
 
-async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, disableDuet, disableStitch }) {
+async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, disableDuet, disableStitch, brandContentToggle, brandOrganicToggle }) {
   const info = await creatorInfo();
   const allowed = info.data?.privacy_level_options || [];
   if (!privacyLevel) {
@@ -221,7 +221,9 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
       privacy_level: privacy,
       disable_comment: Boolean(disableComment),
       disable_duet: Boolean(disableDuet),
-      disable_stitch: Boolean(disableStitch)
+      disable_stitch: Boolean(disableStitch),
+      brand_content_toggle: Boolean(brandContentToggle),
+      brand_organic_toggle: Boolean(brandOrganicToggle)
     },
     source_info: {
       source: "PULL_FROM_URL",
@@ -259,7 +261,7 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
   return result.data;
 }
 
-async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLevel, disableComment, disableDuet, disableStitch }) {
+async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLevel, disableComment, disableDuet, disableStitch, brandContentToggle, brandOrganicToggle }) {
   const info = await creatorInfo();
   const allowed = info.data?.privacy_level_options || [];
   if (!privacyLevel) throw new Error("Debes seleccionar un nivel de privacidad");
@@ -286,7 +288,9 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
       privacy_level: privacyLevel,
       disable_comment: Boolean(disableComment),
       disable_duet: Boolean(disableDuet),
-      disable_stitch: Boolean(disableStitch)
+      disable_stitch: Boolean(disableStitch),
+      brand_content_toggle: Boolean(brandContentToggle),
+      brand_organic_toggle: Boolean(brandOrganicToggle)
     },
     source_info: {
       source: "FILE_UPLOAD",
@@ -544,7 +548,15 @@ const server = http.createServer(async (req, res) => {
           <p><label><input id="comment" type="checkbox" ${d.comment_disabled ? "disabled" : ""}> Permitir comentarios</label></p>
           <p><label><input id="duet" type="checkbox" ${d.duet_disabled ? "disabled" : ""}> Permitir Duet</label></p>
           <p><label><input id="stitch" type="checkbox" ${d.stitch_disabled ? "disabled" : ""}> Permitir Stitch</label></p>
-          <p><label><input id="consent" type="checkbox" required> Confirmo que quiero enviar este video a mi cuenta de TikTok.</label></p>
+          <p><strong>Vista previa</strong></p>
+          <video id="preview" controls playsinline style="width:100%;max-height:420px;background:#000;border-radius:10px;display:none"></video>
+          <p id="durationInfo" class="warn"></p>
+          <p><label><input id="commercial" type="checkbox"> Este contenido es comercial</label></p>
+          <div id="commercialOptions" style="display:none;margin-left:15px">
+            <p><label><input id="brandOrganic" type="checkbox"> Promociona mi propia marca o negocio</label></p>
+            <p><label><input id="brandContent" type="checkbox"> Promociona una marca, producto o servicio de terceros</label></p>
+          </div>
+          <p><label><input id="consent" type="checkbox" required> By posting, you agree to TikTok's Music Usage Confirmation</label></p>
           <button id="submit" type="submit">Publicar en TikTok</button>
         </form>
         <pre id="result" style="white-space:pre-wrap"></pre>
@@ -553,6 +565,30 @@ const server = http.createServer(async (req, res) => {
           const result=document.getElementById("result");
           const submit=document.getElementById("submit");
           const generateCaption=document.getElementById("generateCaption");
+          const videoInput=document.getElementById("video");
+          const preview=document.getElementById("preview");
+          const durationInfo=document.getElementById("durationInfo");
+          const commercial=document.getElementById("commercial");
+          const commercialOptions=document.getElementById("commercialOptions");
+          const maxDuration=${duration || 0};
+
+          videoInput.addEventListener("change",()=>{
+            const file=videoInput.files[0];
+            if(!file){ preview.style.display="none"; preview.removeAttribute("src"); return; }
+            if(preview.src) URL.revokeObjectURL(preview.src);
+            preview.src=URL.createObjectURL(file);
+            preview.style.display="block";
+            preview.onloadedmetadata=()=>{
+              const seconds=preview.duration;
+              durationInfo.textContent=maxDuration && seconds>maxDuration
+                ? "❌ El video dura "+seconds.toFixed(1)+" s y supera el máximo permitido de "+maxDuration+" s."
+                : "Duración: "+seconds.toFixed(1)+" s"+(maxDuration ? " / máximo: "+maxDuration+" s" : "");
+            };
+          });
+
+          commercial.addEventListener("change",()=>{
+            commercialOptions.style.display=commercial.checked ? "block" : "none";
+          });
 
           function show(message){
             result.textContent=String(message||"");
@@ -618,6 +654,10 @@ const server = http.createServer(async (req, res) => {
             if(!privacy){show("❌ Selecciona el nivel de privacidad.");return;}
             if(!document.getElementById("consent").checked){show("❌ Confirma que quieres enviar el video.");return;}
             if(file.size>4*1024*1024*1024){show("❌ El video supera 4 GB.");return;}
+            if(maxDuration && Number.isFinite(preview.duration) && preview.duration>maxDuration){
+              show("❌ El video supera la duración máxima permitida por TikTok ("+maxDuration+" s).");
+              return;
+            }
 
             submit.disabled=true;
             submit.textContent="Enviando...";
@@ -628,7 +668,9 @@ const server = http.createServer(async (req, res) => {
               privacy_level:privacy,
               disable_comment:String(!document.getElementById("comment").checked),
               disable_duet:String(!document.getElementById("duet").checked),
-              disable_stitch:String(!document.getElementById("stitch").checked)
+              disable_stitch:String(!document.getElementById("stitch").checked),
+              brand_content_toggle:String(commercial.checked && document.getElementById("brandContent").checked),
+              brand_organic_toggle:String(commercial.checked && document.getElementById("brandOrganic").checked)
             });
 
             try{
@@ -715,7 +757,9 @@ const server = http.createServer(async (req, res) => {
           privacyLevel,
           disableComment: q.get("disable_comment") === "true",
           disableDuet: q.get("disable_duet") === "true",
-          disableStitch: q.get("disable_stitch") === "true"
+          disableStitch: q.get("disable_stitch") === "true",
+          brandContentToggle: q.get("brand_content_toggle") === "true",
+          brandOrganicToggle: q.get("brand_organic_toggle") === "true"
         });
         return json(res, 200, { ok: true, ...result });
       } finally {
@@ -742,7 +786,9 @@ const server = http.createServer(async (req, res) => {
         privacyLevel: data.privacy_level,
         disableComment: data.disable_comment,
         disableDuet: data.disable_duet,
-        disableStitch: data.disable_stitch
+        disableStitch: data.disable_stitch,
+        brandContentToggle: data.brand_content_toggle,
+        brandOrganicToggle: data.brand_organic_toggle
       });
       const publishId = result.data?.publish_id;
       if (publishId) publishJobs.set(publishId, { createdAt: Date.now(), videoUrl, title: data.title || "" });
