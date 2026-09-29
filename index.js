@@ -263,8 +263,7 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
   if (!videoSize) throw new Error("El archivo de video está vacío");
   if (videoSize > 4 * 1024 * 1024 * 1024) throw new Error("El video supera el máximo de 4 GB");
 
-  const chunkSize = videoSize < 5 * 1024 * 1024 ? videoSize : 10 * 1024 * 1024;
-  const totalChunkCount = Math.ceil(videoSize / chunkSize);
+  // TikTok acepta un archivo completo si mide hasta 64,000,000 bytes.\n  // Para archivos mayores usamos bloques de 10,000,000 bytes.\n  // Usamos los tamaños decimales documentados por TikTok para evitar\n  // rechazos de `chunk_size` por diferencias entre MB y MiB.\n  const chunkSize = videoSize <= 64_000_000 ? videoSize : 10_000_000;\n  const totalChunkCount = Math.ceil(videoSize / chunkSize);
 
   const token = await getAccessToken();
   const initPayload = {
