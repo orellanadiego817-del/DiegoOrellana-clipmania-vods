@@ -527,7 +527,9 @@ const server = http.createServer(async (req, res) => {
         <p>Duración máxima informada: ${duration ? duration + " segundos" : "no disponible"}</p>
         <form id="publishForm">
           <p><label>Video<br><input id="video" type="file" accept="video/mp4,video/quicktime,video/webm" required></label></p>
-          <p><label>Título/caption<br><textarea id="title" maxlength="2200" rows="4" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:8px;padding:8px" placeholder="Escribe el texto para TikTok"></textarea></label></p>
+          <p><label>Nombre del creador/streamer<br><input id="streamer" maxlength="80" style="width:100%;box-sizing:border-box;background:#222;color:#eee;border:1px solid #555;border-radius:8px;padding:8px" placeholder="Ej: WestCOL"></label></p>
+                    <p><label>Título/caption<br><textarea id="title" maxlength="2200" rows="4" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:8px;padding:8px" placeholder="Escribe el texto para TikTok"></textarea></label></p>
+          <p><button id="generateCaption" type="button">✨ Generar caption + hashtags</button></p>
           <p><label>Privacidad<br><select id="privacy" required><option value="">Selecciona una opción</option>${options.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("")}</select></label></p>
           <p>Interacciones (ninguna está activada por defecto):</p>
           <p><label><input id="comment" type="checkbox" ${d.comment_disabled ? "disabled" : ""}> Permitir comentarios</label></p>
@@ -541,6 +543,7 @@ const server = http.createServer(async (req, res) => {
           const form=document.getElementById("publishForm");
           const result=document.getElementById("result");
           const submit=document.getElementById("submit");
+          const generateCaption=document.getElementById("generateCaption");
 
           function show(message){
             result.textContent=String(message||"");
@@ -555,6 +558,24 @@ const server = http.createServer(async (req, res) => {
             if(!response.ok) data.http_status=response.status;
             return data;
           }
+
+
+          function makeCaption(){
+            const streamer=document.getElementById("streamer").value.trim();
+            const file=document.getElementById("video").files[0];
+            const existing=document.getElementById("title").value.trim();
+            const base=existing || (file ? file.name.replace(/\\.[^.]+$/,"").replace(/[_-]+/g," ").trim() : "Momento épico del directo");
+            const cleanStreamer=streamer.replace(/[^\\p{L}\\p{N} _-]/gu,"").trim();
+            const tags=["#ClipMania","#Gaming","#Directo","#Viral","#ParaTi"];
+            if(cleanStreamer){
+              const tag=cleanStreamer.replace(/\\s+/g,"");
+              if(tag) tags.splice(1,0,"#"+tag);
+            }
+            const caption=(cleanStreamer ? cleanStreamer+" — " : "")+base+" 🔥\\n\\n"+tags.join(" ");
+            document.getElementById("title").value=caption.slice(0,2200);
+          }
+
+          generateCaption.addEventListener("click",makeCaption);
 
           async function checkPublishStatus(publishId){
             for(let i=1;i<=18;i++){
