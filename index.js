@@ -206,7 +206,10 @@ async function creatorInfo() {
 async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, disableDuet, disableStitch }) {
   const info = await creatorInfo();
   const allowed = info.data?.privacy_level_options || [];
-  const privacy = privacyLevel || allowed[0] || "SELF_ONLY";
+  if (!privacyLevel) {
+    throw new Error("Debes seleccionar manualmente un nivel de privacidad de TikTok");
+  }
+  const privacy = privacyLevel;
   if (!allowed.includes(privacy)) {
     throw new Error("El nivel de privacidad no está permitido por la cuenta de TikTok");
   }
@@ -243,7 +246,13 @@ async function publishToTikTok({ videoUrl, title, privacyLevel, disableComment, 
       message: e.message || null,
       log_id: e.log_id || null
     });
-    const error = new Error(e.message || e.code || "TikTok rechazó la publicación");
+    let message = e.message || e.code || "TikTok rechazó la publicación";
+    if (e.code === "unaudited_client_can_only_post_to_private_accounts") {
+      message = "TikTok bloqueó la publicación pública porque la aplicación todavía no ha pasado la auditoría de TikTok. La integración funciona, pero la visibilidad pública seguirá restringida hasta que TikTok apruebe el cliente.";
+    } else if (e.code === "privacy_level_option_mismatch") {
+      message = "La privacidad seleccionada no coincide con las opciones actuales de la cuenta de TikTok. Actualiza la página y vuelve a seleccionar una opción.";
+    }
+    const error = new Error(message);
     error.tiktok = detail;
     throw error;
   }
