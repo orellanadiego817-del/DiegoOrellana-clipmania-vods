@@ -432,9 +432,24 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && route === "/") {
       return page(res, "ClipManiaLatam", `
         <h1>ClipManiaLatam</h1>
-        <p>Plataforma para organizar, preparar y publicar contenido de video para creadores y equipos autorizados.</p>
-        <p><a href="/tiktok">Conectar TikTok</a></p>
-        <p><a href="/terminos">Términos de Servicio</a><br><a href="/privacidad">Política de Privacidad</a></p>
+        <p><strong>Herramientas de publicación para creadores autorizados.</strong></p>
+        <p>ClipManiaLatam ayuda a creadores y equipos con autorización para preparar videos cortos, revisar su publicación y compartirlos en sus cuentas de redes sociales mediante integraciones oficiales.</p>
+        <h2>Cómo funciona</h2>
+        <ol>
+          <li>El creador conecta su cuenta mediante la autorización oficial de la plataforma.</li>
+          <li>Selecciona un video que tiene derecho o autorización para utilizar.</li>
+          <li>Revisa la vista previa, caption, privacidad y opciones de interacción.</li>
+          <li>Confirma explícitamente la publicación.</li>
+          <li>ClipManiaLatam muestra el identificador y estado de la publicación.</li>
+        </ol>
+        <h2>Publicación en TikTok</h2>
+        <p>ClipManiaLatam utiliza la integración oficial de TikTok Content Posting API para que el creador autorizado pueda publicar contenido en su propia cuenta. Las opciones de privacidad se obtienen de TikTok y el usuario debe seleccionarlas antes de publicar.</p>
+        <p><a href="/tiktok"><button>Conectar TikTok</button></a></p>
+        <h2>Uso responsable del contenido</h2>
+        <p>El usuario es responsable de contar con los derechos, permisos o autorización necesarios para cualquier video que publique. ClipManiaLatam no pretende transferir derechos sobre contenido de terceros ni publicar contenido en una cuenta sin autorización del titular.</p>
+        <h2>Información legal</h2>
+        <p><a href="/terminos">Términos de Servicio</a> &nbsp; | &nbsp; <a href="/privacidad">Política de Privacidad</a></p>
+        <p>Última actualización: 30 de septiembre de 2026.</p>
       `);
     }
 
