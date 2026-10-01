@@ -267,8 +267,10 @@ async function downloadKickVod(vodUrl,output) {
       .filter(file=>{try{const s=fs.statSync(file);return s.isFile()&&s.size>=10000;}catch{return false;}})
       .sort((a,b)=>fs.statSync(b).size-fs.statSync(a).size);
     if(!candidates.length) throw new Error("Descarga vacía.");
+    try{if(fs.existsSync(output)) fs.unlinkSync(output);}catch{}
     fs.renameSync(candidates[0],output);
     for(const file of candidates.slice(1)){try{fs.unlinkSync(file);}catch{}}
+    if(!fs.existsSync(output)||fs.statSync(output).size<10000) throw new Error("El VOD descargado no es válido.");
   };
 
   try {
