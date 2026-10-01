@@ -15,6 +15,9 @@ const TIKTOK_CLIENT_KEY = String(process.env.TIKTOK_CLIENT_KEY || "").trim();
 const TIKTOK_CLIENT_SECRET = String(process.env.TIKTOK_CLIENT_SECRET || "").trim();
 const TIKTOK_REDIRECT_URI = String(process.env.TIKTOK_REDIRECT_URI || (BASE_URL + "/auth/tiktok/callback")).trim();
 const TIKTOK_SCOPES = String(process.env.TIKTOK_SCOPES || "user.info.basic,video.publish").trim();
+const KICK_CLIENT_ID = String(process.env.KICK_CLIENT_ID || "").trim();
+const KICK_CLIENT_SECRET = String(process.env.KICK_CLIENT_SECRET || "").trim();
+const KICK_POLL_MS = Math.max(60000, Number(process.env.KICK_POLL_MS || 180000));
 
 const vods = new Map();
 const oauthStates = new Map();
@@ -22,6 +25,9 @@ const adminSessions = new Map();
 const publishJobs = new Map();
 const publishHistory = new Map();
 const clipLibrary = new Map();
+const kickStreamers = new Map();
+const kickJobs = new Map();
+let kickAppToken = null;
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
@@ -31,7 +37,9 @@ function serializeState() {
   return {
     vods: Array.from(vods.values()),
     clips: Array.from(clipLibrary.values()),
-    publications: Array.from(publishHistory.values())
+    publications: Array.from(publishHistory.values()),
+    kickStreamers: Array.from(kickStreamers.values()),
+    kickJobs: Array.from(kickJobs.values())
   };
 }
 
@@ -58,6 +66,8 @@ function loadState() {
     for (const vod of Array.isArray(data.vods) ? data.vods : []) if (vod?.id) vods.set(vod.id, vod);
     for (const clip of Array.isArray(data.clips) ? data.clips : []) if (clip?.id) clipLibrary.set(clip.id, clip);
     for (const pub of Array.isArray(data.publications) ? data.publications : []) if (pub?.publishId) publishHistory.set(pub.publishId, pub);
+    for (const streamer of Array.isArray(data.kickStreamers) ? data.kickStreamers : []) if (streamer?.id) kickStreamers.set(streamer.id, streamer);
+    for (const job of Array.isArray(data.kickJobs) ? data.kickJobs : []) if (job?.id) kickJobs.set(job.id, job);
   } catch {}
 }
 
@@ -87,7 +97,7 @@ nav{margin-bottom:25px}.ok{color:#70e070}.warn{color:#ffd166}
 button{background:#fff;color:#111;border:0;padding:12px 18px;border-radius:10px;font-weight:bold}
 code{background:#222;padding:3px 6px;border-radius:5px}
 </style></head><body>
-<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/vods">VODs</a> | <a href="/clips">Clips</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a> | <a href="/logout">Salir</a></nav>
+<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/vods">VODs</a> | <a href="/kick">KICK Auto</a> | <a href="/clips">Clips</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a> | <a href="/logout">Salir</a></nav>
 <div class="box">${content}</div></body></html>`);
 }
 
@@ -145,6 +155,125 @@ function saveTokens(tokens) {
 
 let tiktokTokens = loadTokens();
 loadState();
+
+
+function kickConfigured() {
+  return Boolean(KICK_CLIENT_ID && KICK_CLIENT_SECRET);
+}
+
+async function kickToken() {
+  if (kickAppToken?.access_token && kickAppToken.expires_at > Date.now() + 60000) return kickAppToken.access_token;
+  if (!kickConfigured()) throw new Error("KICK no está configurado: faltan KICK_CLIENT_ID y KICK_CLIENT_SECRET.");
+  const body = new URLSearchParams({ grant_type:"client_credentials", client_id:KICK_CLIENT_ID, client_secret:KICK_CLIENT_SECRET });
+  const response = await fetch("https://id.kick.com/oauth/token", { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body });
+  const data = await response.json().catch(()=>({}));
+  if (!response.ok || !data.access_token) throw new Error(data.error_description || data.error || "No se pudo autenticar contra KICK.");
+  kickAppToken={access_token:data.access_token,expires_at:Date.now()+Number(data.expires_in||3600)*1000};
+  return kickAppToken.access_token;
+}
+
+async function kickApi(pathname) {
+  const token=await kickToken();
+  const response=await fetch("https://api.kick.com"+pathname,{headers:{Authorization:"Bearer "+token,Accept:"application/json"}});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error("KICK API "+response.status+": "+(data.message||data.error||"respuesta no válida"));
+  return data;
+}
+
+async function kickResolveStreamer(slug) {
+  const data=await kickApi("/public/v1/channels?slug="+encodeURIComponent(slug));
+  const channel=Array.isArray(data.data)?data.data[0]:null;
+  if(!channel) throw new Error("No se encontró el canal de KICK: "+slug);
+  return channel;
+}
+
+async function kickIsLive(userId) {
+  const data=await kickApi("/public/v1/users/livestreams?user_id="+encodeURIComponent(userId));
+  return Array.isArray(data.data)?data.data[0]||null:null;
+}
+
+async function discoverKickVodUrl(slug) {
+  const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)"}});
+  if(!response.ok) throw new Error("KICK videos respondió "+response.status);
+  const html=await response.text();
+  const ids=[...html.matchAll(/\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
+  const unique=[...new Set(ids)];
+  if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
+  return "https://kick.com/"+slug+"/videos/"+unique[0];
+}
+
+async function downloadKickVod(vodUrl,output) {
+  ensureDataDir();
+  fs.mkdirSync(path.dirname(output),{recursive:true});
+  const tmp=output+".part";
+  try{fs.unlinkSync(tmp)}catch{}
+  try{
+    await ytDlp(vodUrl,{output:tmp,format:"best[ext=mp4]/best",mergeOutputFormat:"mp4",noWarnings:true,noProgress:true,retries:3,fragmentRetries:3});
+    if(!fs.existsSync(tmp)||fs.statSync(tmp).size<10000) throw new Error("Descarga vacía.");
+    fs.renameSync(tmp,output);
+  }catch(error){try{fs.unlinkSync(tmp)}catch{};throw error;}
+}
+
+async function generateClipsFromLocalFile(vod,inputFile,count=3,clipDuration=30) {
+  ensureDataDir();
+  const clipsDir=path.join(DATA_DIR,"clips"); fs.mkdirSync(clipsDir,{recursive:true});
+  const safeCount=Math.max(1,Math.min(5,Number(count)||3));
+  const safeDuration=Math.max(10,Math.min(60,Number(clipDuration)||30));
+  let durationSec=0;
+  try{
+    const probe=await execFileAsync(ffmpegPath,["-i",inputFile],{timeout:60000,maxBuffer:1024*1024*2});
+    const m=String(probe.stderr||"").match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/);
+    if(m) durationSec=Number(m[1])*3600+Number(m[2])*60+Number(m[3]);
+  }catch{}
+  const starts=[]; const maxStart=Math.max(0,durationSec-safeDuration);
+  for(let i=0;i<safeCount;i++) starts.push(Math.round(maxStart*(i/(safeCount-1||1))));
+  const created=[];
+  for(let i=0;i<starts.length;i++){
+    const id="clip_"+crypto.randomUUID(), output=path.join(clipsDir,id+".mp4");
+    await execFileAsync(ffmpegPath,["-y","-ss",String(starts[i]),"-i",inputFile,"-t",String(safeDuration),"-c:v","libx264","-preset","veryfast","-c:a","aac","-movflags","+faststart",output],{timeout:300000,maxBuffer:1024*1024*2});
+    const clip={id,title:"Clip automático "+(i+1)+" — "+String(vod.title).slice(0,100),streamer:String(vod.streamer||"").slice(0,80),duration:safeDuration,thumbnail:"",videoUrl:BASE_URL+"/clip-media/"+encodeURIComponent(id),sourceVodId:vod.id,sourceVodTitle:vod.title,startSec:starts[i],status:"Pendiente",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),generation:"kick-automatic-candidate",publishRequired:true};
+    clipLibrary.set(id,clip); created.push(clip);
+  }
+  vod.clips=[...(Array.isArray(vod.clips)?vod.clips:[]),...created.map(x=>({id:x.id,title:x.title,startSec:x.startSec,duration:x.duration,status:x.status,videoUrl:x.videoUrl}))];
+  vod.status="clips_generated"; vod.updatedAt=new Date().toISOString(); vod.localFile=inputFile; vods.set(vod.id,vod); saveState(); return created;
+}
+
+async function processKickJob(job) {
+  if(job.status==="completed"||job.status==="waiting_publish") return;
+  job.updatedAt=Date.now();
+  try{
+    if(job.status==="waiting_vod"||!job.vodUrl){job.status="finding_vod";job.vodUrl=await discoverKickVodUrl(job.slug);}
+    const vodId="kick_"+crypto.createHash("sha1").update(job.vodUrl).digest("hex").slice(0,20);
+    let vod=vods.get(vodId);
+    if(!vod){
+      const file=path.join(DATA_DIR,"vods",vodId+".mp4");
+      job.status="downloading"; await downloadKickVod(job.vodUrl,file);
+      vod={id:vodId,title:job.title||("VOD de "+job.slug),url:job.vodUrl,source:"kick-auto",streamer:job.slug,rightsConfirmed:job.rightsConfirmed===true,status:"downloaded",clips:[],localFile:file,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+      vods.set(vodId,vod); job.vodId=vodId; job.status="generating_clips"; await generateClipsFromLocalFile(vod,file,3,30);
+    }else job.vodId=vodId;
+    job.status="waiting_publish"; job.updatedAt=Date.now(); saveState();
+  }catch(error){
+    job.attempts=(job.attempts||0)+1; job.lastError=String(error.message||error);
+    job.status=job.attempts>=8?"failed":"waiting_vod"; job.nextTryAt=Date.now()+Math.min(60*60*1000,Math.max(5*60*1000,job.attempts*5*60*1000)); job.updatedAt=Date.now(); saveState();
+  }
+}
+
+async function runKickMonitor() {
+  if(!kickConfigured()||!kickStreamers.size) return;
+  for(const streamer of kickStreamers.values()){
+    if(!streamer.enabled) continue;
+    try{
+      const live=await kickIsLive(streamer.userId), wasLive=Boolean(streamer.live);
+      streamer.live=Boolean(live); streamer.lastCheckedAt=Date.now(); streamer.viewerCount=live?.viewer_count||live?.viewerCount||0; streamer.lastLive=live||streamer.lastLive||null;
+      if(wasLive&&!live){
+        const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
+        if(!duplicate) kickJobs.set("kickjob_"+crypto.randomUUID(),{id:"kickjob_"+crypto.randomUUID(),slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
+      }
+      saveState();
+    }catch(error){streamer.lastError=error.message;streamer.lastCheckedAt=Date.now();saveState();}
+  }
+  for(const job of kickJobs.values()) if((job.status==="waiting_vod"||job.status==="finding_vod")&&(!job.nextTryAt||job.nextTryAt<=Date.now())) await processKickJob(job);
+}
 
 function tiktokConfigured() {
   return Boolean(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET && TIKTOK_REDIRECT_URI);
@@ -422,6 +551,20 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
       nickname: info.data?.creator_nickname || null
     }
   };
+}
+
+
+function cleanupPublishedClip(clipId) {
+  const clip=clipLibrary.get(clipId); if(!clip) return;
+  try{fs.unlinkSync(path.join(DATA_DIR,"clips",clip.id+".mp4"))}catch{}
+  clip.status="Publicado"; clip.videoUrl=null; clip.updatedAt=new Date().toISOString(); clipLibrary.set(clip.id,clip);
+  const vod=clip.sourceVodId?vods.get(clip.sourceVodId):null;
+  if(vod&&Array.isArray(vod.clips)){
+    const item=vod.clips.find(x=>x.id===clip.id); if(item)item.status="Publicado";
+    const pending=Array.from(clipLibrary.values()).some(x=>x.sourceVodId===vod.id&&x.status!=="Publicado");
+    if(!pending){try{if(vod.localFile)fs.unlinkSync(vod.localFile)}catch{};try{if(vod.localFile)fs.unlinkSync(vod.localFile+".part")}catch{};vod.localFile=null;vod.status="completed";vod.updatedAt=new Date().toISOString();vods.set(vod.id,vod);}
+  }
+  saveState();
 }
 
 async function publishStatus(publishId) {
@@ -1296,6 +1439,22 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, ...statusData });
     }
 
+
+    if (req.method === "GET" && route === "/kick") {
+      if (!requireAdmin(req,res)) return;
+      const rows=Array.from(kickStreamers.values()).map(s=>"<tr><td>"+escapeHtml(s.slug)+"</td><td>"+escapeHtml(s.region||"")+"</td><td>"+(s.live?"🟢 EN VIVO":"⚪ OFFLINE")+"</td><td>"+escapeHtml(String(s.viewerCount||0))+"</td><td><button onclick=\"toggleKick('"+escapeHtml(s.id)+"')\">"+(s.enabled?"Desactivar":"Activar")+"</button></td></tr>").join("");
+      return page(res,"Monitor KICK","<h1>🎥 Monitor automático de KICK</h1><p>Detecta directos, espera el VOD, descarga, procesa y deja los clips en cola.</p><form id=\"f\"><input name=\"slug\" placeholder=\"usuario de KICK\" required><input name=\"region\" placeholder=\"Región\"><label><input type=\"checkbox\" name=\"rights\" required> Confirmo que tengo autorización para usar este contenido.</label><button>Agregar streamer</button></form><table><tr><th>Streamer</th><th>Región</th><th>Estado</th><th>Viewers</th><th></th></tr>"+rows+"</table><p><a href=\"/panel\">← Panel</a></p><script>f.onsubmit=async(e)=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));const r=await fetch('/api/kick/streamers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:d.slug,region:d.region,rights_confirmed:!!d.rights})});const x=await r.json();if(!x.ok)alert(x.error);else location.reload()};async function toggleKick(id){await fetch('/api/kick/streamers/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false})});location.reload()}</script>");
+    }
+    if (req.method === "GET" && route === "/api/kick/status") return json(res,200,{ok:true,configured:kickConfigured(),streamers:Array.from(kickStreamers.values()),jobs:Array.from(kickJobs.values()).sort((a,b)=>b.createdAt-a.createdAt).slice(0,50)});
+    if (req.method === "POST" && route === "/api/kick/streamers") {
+      if (!requireAdmin(req,res)) return; const data=await readJson(req); if(!data.rights_confirmed)return json(res,400,{ok:false,error:"Debes confirmar que tienes autorización para usar este contenido."});
+      const slug=String(data.slug||"").trim().replace(/^https?:\/\/(?:www\.)?kick\.com\//i,"").split(/[/?#]/)[0].toLowerCase(); if(!slug)return json(res,400,{ok:false,error:"Falta el usuario de KICK."});
+      try{const channel=await kickResolveStreamer(slug);const userId=Number(channel.user_id||channel.broadcaster_user_id||channel.user?.id);if(!userId)throw new Error("KICK no devolvió el ID del usuario.");const id="kickstream_"+userId;const s={id,slug,region:String(data.region||"").slice(0,60),userId,enabled:true,rightsConfirmed:true,live:false,createdAt:Date.now(),updatedAt:Date.now()};kickStreamers.set(id,s);saveState();return json(res,201,{ok:true,streamer:s});}catch(error){return json(res,400,{ok:false,error:error.message});}
+    }
+    if (req.method === "PATCH" && route.startsWith("/api/kick/streamers/")) {
+      if (!requireAdmin(req,res)) return; const id=decodeURIComponent(route.slice("/api/kick/streamers/".length));const s=kickStreamers.get(id);if(!s)return json(res,404,{ok:false,error:"Streamer no encontrado"});const data=await readJson(req);if(data.enabled!==undefined)s.enabled=Boolean(data.enabled);s.updatedAt=Date.now();kickStreamers.set(id,s);saveState();return json(res,200,{ok:true,streamer:s});
+    }
+
     if (req.method === "GET" && route === "/api/vods") {
       return json(res, 200, { ok: true, count: vods.size, vods: Array.from(vods.values()) });
     }
@@ -1406,4 +1565,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log("ClipManiaLatam activo en el puerto " + PORT);
+  if (kickConfigured()) { runKickMonitor().catch(e=>console.error("KICK monitor:",e.message)); setInterval(()=>runKickMonitor().catch(e=>console.error("KICK monitor:",e.message)),KICK_POLL_MS); }
+  else console.log("KICK monitor pendiente: configura KICK_CLIENT_ID y KICK_CLIENT_SECRET.");
 });
