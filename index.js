@@ -14,6 +14,7 @@ const TIKTOK_SCOPES = String(process.env.TIKTOK_SCOPES || "user.info.basic,video
 const vods = new Map();
 const oauthStates = new Map();
 const publishJobs = new Map();
+const publishHistory = new Map();
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
@@ -359,12 +360,16 @@ async function publishVideoFileToTikTok(filePath, mimeType, { title, privacyLeve
     await handle.close();
   }
 
-  publishJobs.set(publishId, {
+  const job = {
     createdAt: Date.now(),
     videoUrl: null,
     title: String(title || ""),
-    source: "FILE_UPLOAD"
-  });
+    source: "FILE_UPLOAD",
+    status: "PROCESSING",
+    publishId
+  };
+  publishJobs.set(publishId, job);
+  publishHistory.set(publishId, job);
 
   return {
     publish_id: publishId,
@@ -418,6 +423,67 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    if (req.method === "GET" && route === "/dashboard") {
+      return page(res, "Panel de ClipManiaLatam", `
+        <style>
+          .dash-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+          .dash-card{background:#151515;border:1px solid #333;border-radius:14px;padding:18px}
+          .dash-card h3{margin:0 0 8px}.dash-value{font-size:28px;font-weight:800}
+          .dash-ok{color:#70e070}.dash-warn{color:#ffd166}.dash-muted{color:#aaa}
+          .dash-actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+          .dash-actions a{text-decoration:none}.dash-table{width:100%;border-collapse:collapse;margin-top:10px}
+          .dash-table th,.dash-table td{padding:10px 8px;border-bottom:1px solid #333;text-align:left;font-size:14px}
+          .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#292929}
+          @media(max-width:700px){.dash-grid{grid-template-columns:1fr}.dash-table{font-size:13px}}
+        </style>
+        <h1>Panel de ClipManiaLatam</h1>
+        <p class="dash-muted">Centro de control para preparar y publicar contenido de creadores autorizados.</p>
+        <div class="dash-grid">
+          <div class="dash-card"><h3>TikTok</h3><div id="tiktokStatus" class="dash-value dash-warn">Cargando...</div><p id="tiktokAccount">Consultando cuenta...</p></div>
+          <div class="dash-card"><h3>VODs recibidos</h3><div id="vodCount" class="dash-value">—</div><p class="dash-muted">Disponibles en esta sesión.</p></div>
+          <div class="dash-card"><h3>Publicaciones</h3><div id="pubCount" class="dash-value">—</div><p class="dash-muted">Historial de esta sesión.</p></div>
+        </div>
+        <div class="dash-actions">
+          <a href="/tiktok"><button>Administrar TikTok</button></a>
+          <a href="/tiktok/publish"><button>🎬 Publicar un clip</button></a>
+          <button id="refresh">↻ Actualizar panel</button>
+        </div>
+        <div id="accountBox" class="dash-card" style="display:none">
+          <h2>Cuenta conectada</h2><p id="accountDetails"></p>
+        </div>
+        <h2>Actividad reciente</h2>
+        <div id="activity" class="dash-card"><p>Cargando actividad...</p></div>
+        <h2>Próximos módulos</h2>
+        <p>Esta base permite añadir biblioteca de clips, estadísticas, programación y publicación en otras plataformas.</p>
+        <script>
+          const esc=v=>String(v??"").replace(/[&<>"\x27]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",\"":"&quot;","\x27":"&#39;"}[c]));
+          async function loadDashboard(){
+            const activity=document.getElementById("activity");
+            try{
+              const r=await fetch("/api/dashboard");
+              const d=await r.json();
+              if(!d.ok) throw new Error(d.error||"No se pudo cargar el panel");
+              const t=d.tiktok||{};
+              const status=document.getElementById("tiktokStatus");
+              status.textContent=t.connected?"Conectado":"No conectado";
+              status.className="dash-value "+(t.connected?"dash-ok":"dash-warn");
+              document.getElementById("tiktokAccount").textContent=t.creator?.nickname||t.creator?.username||(t.connected?"Cuenta TikTok":"Conecta una cuenta para publicar.");
+              document.getElementById("vodCount").textContent=d.vod_count??0;
+              document.getElementById("pubCount").textContent=(d.publications||[]).length;
+              if(t.creator){
+                document.getElementById("accountBox").style.display="block";
+                document.getElementById("accountDetails").innerHTML="<strong>Usuario:</strong> "+esc(t.creator.username||"No informado")+"<br><strong>Nombre:</strong> "+esc(t.creator.nickname||"No informado")+"<br><strong>Privacidad:</strong> "+esc((t.creator.privacy_options||[]).join(", ")||"No informada")+"<br><strong>Duración máxima:</strong> "+esc(t.creator.max_video_post_duration_sec?t.creator.max_video_post_duration_sec+" s":"No informada");
+              }
+              const pubs=d.publications||[];
+              if(!pubs.length){activity.innerHTML="<p>No hay publicaciones registradas todavía. Publica un clip y aparecerá aquí.</p>";return;}
+              activity.innerHTML="<table class=\"dash-table\"><thead><tr><th>Estado</th><th>Contenido</th><th>Publish ID</th><th>Fecha</th></tr></thead><tbody>"+pubs.map(p=>"<tr><td><span class=\"pill\">"+esc(p.status||"PENDIENTE")+"</span></td><td>"+esc(p.title||"Sin título")+"</td><td><code>"+esc(p.publishId||"—")+"</code></td><td>"+esc(new Date(p.createdAt).toLocaleString("es-CO"))+"</td></tr>").join("")+"</tbody></table>";
+            }catch(e){activity.innerHTML="<p class=\"dash-warn\">No se pudo cargar el panel: "+esc(e.message)+"</p>";}
+          }
+          document.getElementById("refresh").addEventListener("click",loadDashboard);
+          loadDashboard();
+        </script>
+      `);
+    }
     if (req.method === "GET" && route === "/health") {
       return json(res, 200, {
         ok: true,
@@ -444,7 +510,7 @@ const server = http.createServer(async (req, res) => {
         </ol>
         <h2>Publicación en TikTok</h2>
         <p>ClipManiaLatam utiliza la integración oficial de TikTok Content Posting API para que el creador autorizado pueda publicar contenido en su propia cuenta. Las opciones de privacidad se obtienen de TikTok y el usuario debe seleccionarlas antes de publicar.</p>
-        <p><a href="/tiktok"><button>Conectar TikTok</button></a></p>
+        <p><a href="/tiktok"><button>Conectar TikTok</button></a> <a href="/dashboard"><button>Abrir panel</button></a></p>
         <h2>Uso responsable del contenido</h2>
         <p>El usuario es responsable de contar con los derechos, permisos o autorización necesarios para cualquier video que publique. ClipManiaLatam no pretende transferir derechos sobre contenido de terceros ni publicar contenido en una cuenta sin autorización del titular.</p>
         <h2>Información legal</h2>
@@ -797,6 +863,30 @@ const server = http.createServer(async (req, res) => {
       `);
     }
 
+    if (req.method === "GET" && route === "/api/dashboard") {
+      let creator = null;
+      let creatorError = null;
+      if (tiktokTokens?.access_token && tiktokConfigured()) {
+        try { const info = await creatorInfo(); creator = info.data || null; }
+        catch (error) { creatorError = error.message; }
+      }
+      return json(res, 200, {
+        ok: true,
+        tiktok: {
+          configured: tiktokConfigured(),
+          connected: Boolean(tiktokTokens?.access_token),
+          creator: creator ? {
+            username: creator.creator_username || null,
+            nickname: creator.creator_nickname || null,
+            privacy_options: creator.privacy_level_options || [],
+            max_video_post_duration_sec: creator.max_video_post_duration_sec || null
+          } : null,
+          error: creatorError
+        },
+        vod_count: vods.size,
+        publications: Array.from(publishHistory.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,50)
+      });
+    }
     if (req.method === "GET" && route === "/api/tiktok/status") {
       return json(res, 200, {
         ok: true,
@@ -886,7 +976,11 @@ const server = http.createServer(async (req, res) => {
         brandOrganicToggle: data.brand_organic_toggle
       });
       const publishId = result.data?.publish_id;
-      if (publishId) publishJobs.set(publishId, { createdAt: Date.now(), videoUrl, title: data.title || "" });
+      if (publishId) {
+        const job = { createdAt: Date.now(), videoUrl, title: data.title || "", status: "PROCESSING", publishId };
+        publishJobs.set(publishId, job);
+        publishHistory.set(publishId, job);
+      }
       return json(res, 200, { ok: true, ...result, publish_id: publishId || null });
     }
 
@@ -894,7 +988,15 @@ const server = http.createServer(async (req, res) => {
       if (!requireTikTokConfig(res)) return;
       const data = JSON.parse(await readBody(req) || "{}");
       if (!data.publish_id) return json(res, 400, { ok: false, error: "publish_id es obligatorio" });
-      return json(res, 200, { ok: true, ...(await publishStatus(data.publish_id)) });
+      const statusData = await publishStatus(data.publish_id);
+      const status = statusData.data?.status || statusData.status || "PENDIENTE";
+      const existing = publishHistory.get(data.publish_id);
+      if (existing) {
+        const updated = { ...existing, status, updatedAt: Date.now() };
+        publishHistory.set(data.publish_id, updated);
+        publishJobs.set(data.publish_id, updated);
+      }
+      return json(res, 200, { ok: true, ...statusData });
     }
 
     if (req.method === "GET" && route === "/api/vods") {
