@@ -20,6 +20,7 @@ const KICK_CLIENT_ID = String(process.env.KICK_CLIENT_ID || "").trim();
 const KICK_CLIENT_SECRET = String(process.env.KICK_CLIENT_SECRET || "").trim();
 const KICK_POLL_MS = Math.max(60000, Number(process.env.KICK_POLL_MS || 180000));
 const KICK_FETCH_TIMEOUT_MS = 15000;
+function kickWithTimeout(promise,label){ return Promise.race([promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error(label)),KICK_FETCH_TIMEOUT_MS+5000))]); }
 
 const vods = new Map();
 const oauthStates = new Map();
@@ -345,7 +346,7 @@ async function runKickMonitor() {
   const active=Array.from(kickStreamers.values()).filter(s=>s.enabled);
   await Promise.all(active.map(async streamer=>{
     try{
-      const live=await kickIsLive(streamer.userId), wasLive=Boolean(streamer.live);
+      const live=await kickWithTimeout(kickIsLive(streamer.userId),"Tiempo agotado consultando KICK para "+streamer.slug), wasLive=Boolean(streamer.live);
       streamer.live=Boolean(live);
       streamer.lastCheckedAt=Date.now();
       streamer.viewerCount=live?.viewer_count||live?.viewerCount||0;
@@ -371,6 +372,7 @@ async function runKickMonitor() {
     console.log("KICK job:",job.id,job.slug,job.status,"intento",Number(job.attempts||0)+1);
     await processKickJob(job);
   }
+  console.log("KICK monitor: ciclo terminado.");
 }
 function tiktokConfigured() {
   return Boolean(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET && TIKTOK_REDIRECT_URI);
