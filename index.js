@@ -3,6 +3,11 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { pipeline } = require("stream/promises");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const execFileAsync = promisify(execFile);
+const ffmpegPath = require("ffmpeg-static");
+const ytDlp = require("yt-dlp-exec");
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://diegoorellana-clipmania-vods-production.up.railway.app").replace(/\/$/, "");
@@ -398,6 +403,70 @@ async function publishStatus(publishId) {
   return result.data;
 }
 
+async function generateClipsForVod(vod, count = 3, clipDuration = 30) {
+  if (!vod?.url) throw new Error("El VOD no tiene una URL.");
+  if (!/^https:\/\//i.test(String(vod.url))) throw new Error("La URL del VOD debe ser HTTPS.");
+  ensureDataDir();
+  const clipsDir = path.join(DATA_DIR, "clips");
+  fs.mkdirSync(clipsDir, { recursive: true });
+  let durationSec = 0;
+  try {
+    const info = await ytDlp(vod.url, { getDuration: true, noWarnings: true, skipDownload: true });
+    const raw = String(info || "").trim().split(/\r?\n/).filter(Boolean).pop() || "";
+    const parts = raw.split(":").map(Number);
+    if (parts.every(Number.isFinite)) durationSec = parts.length === 3 ? parts[0]*3600 + parts[1]*60 + parts[2] : parts.length === 2 ? parts[0]*60 + parts[1] : parts[0];
+  } catch {}
+  let directUrl = "";
+  try {
+    directUrl = String(await ytDlp(vod.url, { getUrl: true, noWarnings: true, format: "best[ext=mp4]/best" })).trim().split(/\r?\n/).filter(Boolean).pop() || "";
+  } catch (e) { throw new Error("No se pudo obtener el video del VOD: " + e.message); }
+  if (!directUrl) throw new Error("El VOD no devolvió una URL de video reproducible.");
+  const safeCount = Math.max(1, Math.min(5, Number(count) || 3));
+  const safeDuration = Math.max(10, Math.min(60, Number(clipDuration) || 30));
+  let starts = [];
+  if (durationSec > safeDuration) {
+    const maxStart = Math.max(0, durationSec - safeDuration);
+    for (let i=0;i<safeCount;i++) starts.push(Math.round(maxStart * (i/(safeCount-1 || 1))));
+  } else {
+    for (let i=0;i<safeCount;i++) starts.push(i*safeDuration);
+  }
+  const created = [];
+  for (let i=0;i<starts.length;i++) {
+    const clipId = "clip_" + crypto.randomUUID();
+    const output = path.join(clipsDir, clipId + ".mp4");
+    const start = starts[i];
+    try {
+      await execFileAsync(ffmpegPath, ["-y","-ss",String(start),"-i",directUrl,"-t",String(safeDuration),"-c","copy","-movflags","+faststart",output], { timeout: 180000, maxBuffer: 1024*1024*4 });
+    } catch {
+      await execFileAsync(ffmpegPath, ["-y","-ss",String(start),"-i",directUrl,"-t",String(safeDuration),"-c:v","libx264","-preset","veryfast","-c:a","aac","-movflags","+faststart",output], { timeout: 300000, maxBuffer: 1024*1024*4 });
+    }
+    if (!fs.existsSync(output) || fs.statSync(output).size < 10000) throw new Error("No se pudo crear el clip " + (i+1));
+    const clip = {
+      id: clipId,
+      title: "Clip automático " + (i+1) + " — " + String(vod.title).slice(0,100),
+      streamer: String(vod.streamer || "").slice(0,80),
+      duration: safeDuration,
+      thumbnail: "",
+      videoUrl: BASE_URL + "/clip-media/" + encodeURIComponent(clipId),
+      sourceVodId: vod.id,
+      sourceVodTitle: vod.title,
+      startSec: start,
+      status: "Pendiente",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      generation: "automatic-candidate"
+    };
+    clipLibrary.set(clipId, clip);
+    created.push(clip);
+  }
+  vod.clips = Array.isArray(vod.clips) ? vod.clips : [];
+  vod.clips.push(...created.map(c => ({ id:c.id, title:c.title, startSec:c.startSec, duration:c.duration, status:c.status, videoUrl:c.videoUrl })));
+  vod.status = "clips_generated";
+  vod.updatedAt = new Date().toISOString();
+  vods.set(vod.id, vod);
+  return created;
+}
+
 function requireTikTokConfig(res) {
   if (!tiktokConfigured()) {
     json(res, 503, {
@@ -525,6 +594,16 @@ const server = http.createServer(async (req, res) => {
         <p>Esta base permite añadir biblioteca de clips, estadísticas, programación y publicación en otras plataformas.</p>
         <script>
           const esc=v=>String(v??"").replace(/[&<>"\x27]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",\"":"&quot;","\x27":"&#39;"}[c]));
+          async function generateVodClips(id){
+            if(!confirm("Generar 3 clips candidatos de 30 segundos de este VOD?")) return;
+            try{
+              const r=await fetch("/api/vods/"+encodeURIComponent(id)+"/generate-clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count:3,duration:30})});
+              const d=await r.json();
+              if(!r.ok||!d.ok) throw new Error(d.error||"No se pudieron generar los clips");
+              alert("Se generaron "+d.count+" clips y ya están en la Biblioteca.");
+              location.reload();
+            }catch(e){alert("Error: "+e.message);}
+          }
           async function loadDashboard(){
             const activity=document.getElementById("activity");
             try{
@@ -910,7 +989,7 @@ const server = http.createServer(async (req, res) => {
                   <tr>
                     <td>${escapeHtml(v.title)}</td>
                     <td>${escapeHtml(v.streamer || "—")}</td>
-                    <td>${escapeHtml(v.status || "received")}</td>
+                    <td>${escapeHtml(v.status || "received")}<br><button onclick="generateVodClips('${escapeHtml(v.id)}')">🎬 Generar 3 clips</button></td>
                     <td>${escapeHtml(new Date(v.createdAt).toLocaleString("es-CO"))}</td>
                   </tr>
                 `).join("")}
@@ -1143,11 +1222,33 @@ const server = http.createServer(async (req, res) => {
       return json(res, 201, { ok: true, vod });
     }
 
+    if (req.method === "POST" && route.startsWith("/api/vods/") && route.endsWith("/generate-clips")) {
+      const id = decodeURIComponent(route.slice("/api/vods/".length, -"/generate-clips".length));
+      const vod = vods.get(id);
+      if (!vod) return json(res, 404, { ok:false, error:"VOD no encontrado" });
+      try {
+        const body = await readJson(req);
+        const clips = await generateClipsForVod(vod, body.count, body.duration);
+        return json(res, 201, { ok:true, count:clips.length, clips });
+      } catch (error) {
+        return json(res, 500, { ok:false, error:error.message || "No se pudieron generar los clips" });
+      }
+    }
+
     if (req.method === "GET" && route.startsWith("/api/vods/")) {
       const id = route.split("/")[3];
       const vod = vods.get(id);
       if (!vod) return json(res, 404, { ok: false, error: "VOD no encontrado" });
       return json(res, 200, { ok: true, vod });
+    }
+
+    if (req.method === "GET" && route.startsWith("/clip-media/")) {
+      const id = decodeURIComponent(route.slice("/clip-media/".length));
+      if (!/^clip_[a-f0-9-]+$/.test(id)) return json(res, 400, {ok:false,error:"Clip inválido"});
+      const file = path.join(DATA_DIR, "clips", id + ".mp4");
+      if (!fs.existsSync(file)) return json(res, 404, {ok:false,error:"Archivo de clip no encontrado"});
+      res.writeHead(200, {"Content-Type":"video/mp4","Cache-Control":"public, max-age=3600","Accept-Ranges":"bytes"});
+      return pipeline(fs.createReadStream(file), res);
     }
 
     if (req.method === "GET" && route.startsWith("/media/")) {
