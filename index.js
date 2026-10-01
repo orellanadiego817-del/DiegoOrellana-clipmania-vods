@@ -317,10 +317,17 @@ async function processKickJob(job) {
     let vod=vods.get(vodId);
     if(!vod){
       const file=path.join(DATA_DIR,"vods",vodId+".mp4");
-      job.status="downloading"; await downloadKickVod(job.vodUrl,file);
+      job.status="downloading"; job.updatedAt=Date.now(); saveState(); await downloadKickVod(job.vodUrl,file);
       vod={id:vodId,title:job.title||("VOD de "+job.slug),url:job.vodUrl,source:"kick-auto",streamer:job.slug,rightsConfirmed:job.rightsConfirmed===true,status:"downloaded",clips:[],localFile:file,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-      vods.set(vodId,vod); job.vodId=vodId; job.status="generating_clips"; await generateClipsFromLocalFile(vod,file,3,30);
-    }else job.vodId=vodId;
+      vods.set(vodId,vod); job.vodId=vodId; saveState();
+    }else{
+      job.vodId=vodId;
+    }
+    if(!Array.isArray(vod.clips)||vod.clips.length===0){
+      if(!vod.localFile||!fs.existsSync(vod.localFile)) throw new Error("El VOD existe pero falta el archivo local para generar clips.");
+      job.status="generating_clips"; job.updatedAt=Date.now(); saveState();
+      await generateClipsFromLocalFile(vod,vod.localFile,3,30);
+    }
     job.status="waiting_publish"; job.updatedAt=Date.now(); saveState();
   }catch(error){
     job.attempts=(job.attempts||0)+1; job.lastError=String(error.message||error);
@@ -330,19 +337,24 @@ async function processKickJob(job) {
 
 async function runKickMonitor() {
   if(!kickConfigured()||!kickStreamers.size) return;
+  console.log("KICK monitor: comprobando "+kickStreamers.size+" streamer(s).");
   for(const streamer of kickStreamers.values()){
     if(!streamer.enabled) continue;
     try{
       const live=await kickIsLive(streamer.userId), wasLive=Boolean(streamer.live);
       streamer.live=Boolean(live); streamer.lastCheckedAt=Date.now(); streamer.viewerCount=live?.viewer_count||live?.viewerCount||0; streamer.lastLive=live||streamer.lastLive||null;
+      if(wasLive!==Boolean(live)) console.log("KICK monitor:",streamer.slug,Boolean(live)?"EN VIVO":"OFFLINE");
       if(wasLive&&!live){
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
-        if(!duplicate){const jobId="kickjob_"+crypto.randomUUID(); kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});}
+        if(!duplicate){const jobId="kickjob_"+crypto.randomUUID(); kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()}); console.log("KICK monitor: VOD pendiente para",streamer.slug,jobId);}
       }
       saveState();
-    }catch(error){streamer.lastError=error.message;streamer.lastCheckedAt=Date.now();saveState();}
+    }catch(error){streamer.lastError=error.message;streamer.lastCheckedAt=Date.now();console.error("KICK monitor error:",streamer.slug,error.message);saveState();}
   }
-  for(const job of kickJobs.values()) if((job.status==="waiting_vod"||job.status==="finding_vod")&&(!job.nextTryAt||job.nextTryAt<=Date.now())) await processKickJob(job);
+  for(const job of kickJobs.values()) if((job.status==="waiting_vod"||job.status==="finding_vod")&&(!job.nextTryAt||job.nextTryAt<=Date.now())) {
+    console.log("KICK job:",job.id,job.slug,job.status,"intento",Number(job.attempts||0)+1);
+    await processKickJob(job);
+  }
 }
 
 function tiktokConfigured() {
@@ -874,7 +886,7 @@ const server = http.createServer(async (req, res) => {
         <script>
           const esc=v=>String(v??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); let allClips=[];
           function filtered(){const q=document.getElementById("search").value.trim().toLowerCase(),f=document.getElementById("filter").value;return allClips.filter(c=>{const t=(c.title+" "+(c.streamer||"")).toLowerCase();return(!q||t.includes(q))&&(f==="Todos"||c.status===f);});}
-          function render(){const box=document.getElementById("clips"),list=filtered(),total=allClips.length,pending=allClips.filter(c=>c.status==="Pendiente").length,ready=allClips.filter(c=>c.status==="Listo").length,published=allClips.filter(c=>c.status==="Publicado").length;document.getElementById("summary").innerHTML="<span>🎬 Total: "+total+"</span><span>⏳ Pendientes: "+pending+"</span><span>✅ Listos: "+ready+"</span><span>📤 Publicados: "+published+"</span>";if(!list.length){box.innerHTML="<div class='empty'><h3>No hay clips que coincidan</h3><p>Prueba otro texto o cambia el filtro.</p></div>";return;}box.innerHTML=list.map(c=>{const media=c.videoUrl?"<video class='clip-thumb' controls playsinline preload='metadata' src='"+esc(c.videoUrl)+"'></video>":(c.thumbnail?"<img class='clip-thumb' src='"+esc(c.thumbnail)+"' alt='Miniatura' loading='lazy'>":"<div class='clip-placeholder'>🎞️</div>");const publish=c.videoUrl?"<a href='/tiktok/publish'><button>🎬 Publicar</button></a>":"";return "<article class='clip-card'>"+media+"<div class='clip-body'><h3>"+esc(c.title)+"</h3><div class='clip-meta'>👤 "+esc(c.streamer||"Sin streamer")+"<br>⏱️ "+(c.duration?esc(c.duration+" s"):"Duración no indicada")+"<br>📅 "+esc(new Date(c.createdAt).toLocaleString("es-CO"))+"</div><div class='clip-status'>"+esc(c.status)+"</div><div class='clip-actions'><button onclick=\"setStatus('"+esc(c.id)+"','Pendiente')\">Pendiente</button><button onclick=\"setStatus('"+esc(c.id)+"','Listo')\">Listo</button><button onclick=\"setStatus('"+esc(c.id)+"','Publicado')\">Publicado</button>"+publish+"<button onclick=\"removeClip('"+esc(c.id)+"')\">Eliminar</button></div></div></article>";}).join("");}
+          function render(){const box=document.getElementById("clips"),list=filtered(),total=allClips.length,pending=allClips.filter(c=>c.status==="Pendiente").length,ready=allClips.filter(c=>c.status==="Listo").length,published=allClips.filter(c=>c.status==="Publicado").length;document.getElementById("summary").innerHTML="<span>🎬 Total: "+total+"</span><span>⏳ Pendientes: "+pending+"</span><span>✅ Listos: "+ready+"</span><span>📤 Publicados: "+published+"</span>";if(!list.length){box.innerHTML="<div class='empty'><h3>No hay clips que coincidan</h3><p>Prueba otro texto o cambia el filtro.</p></div>";return;}box.innerHTML=list.map(c=>{const media=c.videoUrl?"<video class='clip-thumb' controls playsinline preload='metadata' src='"+esc(c.videoUrl)+"'></video>":(c.thumbnail?"<img class='clip-thumb' src='"+esc(c.thumbnail)+"' alt='Miniatura' loading='lazy'>":"<div class='clip-placeholder'>🎞️</div>");const publish=c.videoUrl?"<a href='/tiktok/publish?clip_id="+encodeURIComponent(c.id)+"'><button>🎬 Publicar</button></a>":"";return "<article class='clip-card'>"+media+"<div class='clip-body'><h3>"+esc(c.title)+"</h3><div class='clip-meta'>👤 "+esc(c.streamer||"Sin streamer")+"<br>⏱️ "+(c.duration?esc(c.duration+" s"):"Duración no indicada")+"<br>📅 "+esc(new Date(c.createdAt).toLocaleString("es-CO"))+"</div><div class='clip-status'>"+esc(c.status)+"</div><div class='clip-actions'><button onclick=\"setStatus('"+esc(c.id)+"','Pendiente')\">Pendiente</button><button onclick=\"setStatus('"+esc(c.id)+"','Listo')\">Listo</button><button onclick=\"setStatus('"+esc(c.id)+"','Publicado')\">Publicado</button>"+publish+"<button onclick=\"removeClip('"+esc(c.id)+"')\">Eliminar</button></div></div></article>";}).join("");}
           async function load(){try{const[cr,vr]=await Promise.all([fetch("/api/clips"),fetch("/api/vods")]),d=await cr.json(),v=await vr.json();if(!d.ok)throw new Error(d.error||"No se pudo cargar la biblioteca");allClips=d.clips||[];const select=document.getElementById("vodSelect"),vs=v.vods||[];select.innerHTML=vs.length?'<option value="">Selecciona un VOD autorizado</option>'+vs.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.title)+' — '+esc(x.streamer||"sin streamer")+'</option>').join(""):'<option value="">No hay VODs disponibles</option>';render();}catch(e){document.getElementById("clips").innerHTML="<div class='empty'><h3>Error</h3><p>"+esc(e.message)+"</p></div>";}}
           document.getElementById("generate").addEventListener("click",async()=>{const id=document.getElementById("vodSelect").value,out=document.getElementById("generateResult"),btn=document.getElementById("generate");if(!id){out.textContent="❌ Selecciona un VOD.";return;}btn.disabled=true;btn.textContent="Generando...";out.textContent="⏳ Procesando el VOD. Puede tardar varios minutos...";try{const r=await fetch("/api/vods/"+encodeURIComponent(id)+"/generate-clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count:3,duration:30})}),d=await r.json();if(!d.ok)throw new Error(d.error||"No se pudieron generar los clips");out.textContent="✅ Se generaron "+d.count+" clips y ya están en la biblioteca.";await load();}catch(e){out.textContent="❌ "+e.message;}finally{btn.disabled=false;btn.textContent="⚡ Generar clips";}});
           async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();} async function removeClip(id){if(!confirm("¿Eliminar este clip?"))return;await fetch("/api/clips/"+encodeURIComponent(id),{method:"DELETE"});load();}
@@ -962,7 +974,10 @@ const server = http.createServer(async (req, res) => {
         status: "funcionando",
         tiktok_configured: tiktokConfigured(),
         tiktok_connected: Boolean(tiktokTokens?.access_token),
-        tiktok_redirect_uri: TIKTOK_REDIRECT_URI
+        tiktok_redirect_uri: TIKTOK_REDIRECT_URI,
+        kick_configured: kickConfigured(),
+        kick_streamers: kickStreamers.size,
+        kick_jobs: kickJobs.size
       });
     }
 
@@ -1218,8 +1233,10 @@ const server = http.createServer(async (req, res) => {
             submit.textContent="Enviando...";
             show("📤 Preparando envío de "+file.name+" ("+(file.size/1024/1024).toFixed(1)+" MB) a TikTok...");
 
-            const qs=new URLSearchParams({
+            const clipId=new URLSearchParams(location.search).get("clip_id")||"";
+          const qs=new URLSearchParams({
               title:document.getElementById("title").value,
+              clip_id:clipId,
               privacy_level:privacy,
               disable_comment:String(!document.getElementById("comment").checked),
               disable_duet:String(!document.getElementById("duet").checked),
@@ -1472,7 +1489,8 @@ const server = http.createServer(async (req, res) => {
         const q = parsed.searchParams;
         const title = q.get("title") || "";
         const privacyLevel = q.get("privacy_level") || "";
-        const result = await publishVideoFileToTikTok(tempPath, contentType, {
+        const clipId = q.get("clip_id") || "";
+      const result = await publishVideoFileToTikTok(tempPath, contentType, {
           title,
           privacyLevel,
           disableComment: q.get("disable_comment") === "true",
@@ -1481,7 +1499,15 @@ const server = http.createServer(async (req, res) => {
           brandContentToggle: q.get("brand_content_toggle") === "true",
           brandOrganicToggle: q.get("brand_organic_toggle") === "true"
         });
-        return json(res, 200, { ok: true, ...result });
+      const publishId = result.publish_id;
+      if(publishId){
+        const job = publishJobs.get(publishId) || { createdAt:Date.now(), title, source:"FILE_UPLOAD", status:"PROCESSING", publishId };
+        job.clipId = clipId || job.clipId || null;
+        publishJobs.set(publishId, job);
+        publishHistory.set(publishId, job);
+        saveState();
+      }
+      return json(res, 200, { ok: true, ...result });
       } finally {
         try { fs.unlinkSync(tempPath); } catch {}
       }
@@ -1513,7 +1539,7 @@ const server = http.createServer(async (req, res) => {
       });
       const publishId = result.data?.publish_id;
       if (publishId) {
-        const job = { createdAt: Date.now(), videoUrl, title: data.title || "", status: "PROCESSING", publishId };
+        const job = { createdAt: Date.now(), videoUrl, title: data.title || "", status: "PROCESSING", publishId, clipId: data.clip_id ? String(data.clip_id) : null };
         publishJobs.set(publishId, job);
         publishHistory.set(publishId, job);
         saveState();
@@ -1533,6 +1559,7 @@ const server = http.createServer(async (req, res) => {
         const updated = { ...existing, status, updatedAt: Date.now() };
         publishHistory.set(data.publish_id, updated);
         publishJobs.set(data.publish_id, updated);
+        if(status==="PUBLISH_COMPLETE" && existing.clipId) cleanupPublishedClip(existing.clipId);
         saveState();
       }
       return json(res, 200, { ok: true, ...statusData });
@@ -1664,6 +1691,9 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log("ClipManiaLatam activo en el puerto " + PORT);
-  if (kickConfigured()) { runKickMonitor().catch(e=>console.error("KICK monitor:",e.message)); setInterval(()=>runKickMonitor().catch(e=>console.error("KICK monitor:",e.message)),KICK_POLL_MS); }
-  else console.log("KICK monitor pendiente: configura KICK_CLIENT_ID y KICK_CLIENT_SECRET.");
+  if (kickConfigured()) {
+    console.log("KICK monitor activo. Poll cada "+KICK_POLL_MS+" ms. Streamers configurados: "+kickStreamers.size);
+    runKickMonitor().catch(e=>console.error("KICK monitor:",e.message));
+    setInterval(()=>runKickMonitor().catch(e=>console.error("KICK monitor:",e.message)),KICK_POLL_MS);
+  } else console.log("KICK monitor pendiente: configura KICK_CLIENT_ID y KICK_CLIENT_SECRET.");
 });
