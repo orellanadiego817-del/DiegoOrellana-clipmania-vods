@@ -19,6 +19,7 @@ const SESSION_SECRET = String(process.env.SESSION_SECRET || TIKTOK_CLIENT_SECRET
 const KICK_CLIENT_ID = String(process.env.KICK_CLIENT_ID || "").trim();
 const KICK_CLIENT_SECRET = String(process.env.KICK_CLIENT_SECRET || "").trim();
 const KICK_POLL_MS = Math.max(60000, Number(process.env.KICK_POLL_MS || 180000));
+const KICK_FETCH_TIMEOUT_MS = 15000;
 
 const vods = new Map();
 const oauthStates = new Map();
@@ -174,7 +175,7 @@ async function kickToken() {
 
 async function kickApi(pathname) {
   const token=await kickToken();
-  const response=await fetch("https://api.kick.com"+pathname,{headers:{Authorization:"Bearer "+token,Accept:"application/json"}});
+  const response=await fetch("https://api.kick.com"+pathname,{headers:{Authorization:"Bearer "+token,Accept:"application/json"},signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error("KICK API "+response.status+": "+(data.message||data.error||"respuesta no válida"));
   return data;
@@ -209,7 +210,7 @@ async function discoverKickVodUrl(slug) {
     "User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)",
     "Accept":"text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"
   };
-  const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers});
+  const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
   if(!response.ok) throw new Error("KICK videos respondió "+response.status);
   const html=await response.text();
 
@@ -227,7 +228,7 @@ async function discoverKickVodUrl(slug) {
 
 async function discoverKickPlaybackUrl(vodUrl) {
   try {
-    const response=await fetch(vodUrl,{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)","Accept":"text/html,application/xhtml+xml"}});
+    const response=await fetch(vodUrl,{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)","Accept":"text/html,application/xhtml+xml"},signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
     if(!response.ok) return null;
     const html=await response.text();
     return extractKickManifestUrls(html)[0]||null;
@@ -340,25 +341,36 @@ async function processKickJob(job) {
 async function runKickMonitor() {
   if(!kickConfigured()||!kickStreamers.size) return;
   console.log("KICK monitor: comprobando "+kickStreamers.size+" streamer(s).");
-  for(const streamer of kickStreamers.values()){
-    if(!streamer.enabled) continue;
+  const active=Array.from(kickStreamers.values()).filter(s=>s.enabled);
+  await Promise.all(active.map(async streamer=>{
     try{
       const live=await kickIsLive(streamer.userId), wasLive=Boolean(streamer.live);
-      streamer.live=Boolean(live); streamer.lastCheckedAt=Date.now(); streamer.viewerCount=live?.viewer_count||live?.viewerCount||0; streamer.lastLive=live||streamer.lastLive||null;
+      streamer.live=Boolean(live);
+      streamer.lastCheckedAt=Date.now();
+      streamer.viewerCount=live?.viewer_count||live?.viewerCount||0;
+      streamer.lastLive=live||streamer.lastLive||null;
       if(wasLive!==Boolean(live)) console.log("KICK monitor:",streamer.slug,Boolean(live)?"EN VIVO":"OFFLINE");
       if(wasLive&&!live){
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
-        if(!duplicate){const jobId="kickjob_"+crypto.randomUUID(); kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()}); console.log("KICK monitor: VOD pendiente para",streamer.slug,jobId);}
+        if(!duplicate){
+          const jobId="kickjob_"+crypto.randomUUID();
+          kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
+          console.log("KICK monitor: VOD pendiente para",streamer.slug,jobId);
+        }
       }
       saveState();
-    }catch(error){streamer.lastError=error.message;streamer.lastCheckedAt=Date.now();console.error("KICK monitor error:",streamer.slug,error.message);saveState();}
-  }
-  for(const job of kickJobs.values()) if((job.status==="waiting_vod"||job.status==="finding_vod")&&(!job.nextTryAt||job.nextTryAt<=Date.now())) {
+    }catch(error){
+      streamer.lastError=error.message;
+      streamer.lastCheckedAt=Date.now();
+      console.error("KICK monitor error:",streamer.slug,error.message);
+      saveState();
+    }
+  }));
+  for(const job of kickJobs.values()) if((job.status==="waiting_vod"||job.status==="finding_vod")&&(!job.nextTryAt||job.nextTryAt<=Date.now())){
     console.log("KICK job:",job.id,job.slug,job.status,"intento",Number(job.attempts||0)+1);
     await processKickJob(job);
   }
 }
-
 function tiktokConfigured() {
   return Boolean(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET && TIKTOK_REDIRECT_URI);
 }
