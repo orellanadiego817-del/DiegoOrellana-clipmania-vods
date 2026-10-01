@@ -956,6 +956,7 @@ const server = http.createServer(async (req, res) => {
           <p>Redirect URI: <code>${escapeHtml(TIKTOK_REDIRECT_URI)}</code></p>
         `);
       }
+      if (tiktokTokens?.access_token && !isAdmin(req)) createAdminSession(res);
       return page(res, "TikTok", `
         <h1>ClipManiaLatam + TikTok</h1>
         <p>${tiktokTokens?.access_token ? '<span class="ok">✓ TikTok conectado</span>' : 'TikTok todavía no está conectado.'}</p>
