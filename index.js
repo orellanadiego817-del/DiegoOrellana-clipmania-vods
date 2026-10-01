@@ -194,12 +194,12 @@ async function kickIsLive(userId) {
 
 function extractKickManifestUrls(text) {
   const source=String(text||"")
-    .replaceAll("\\\\u0026","&")
-    .replaceAll("\\\\/","/")
+    .replaceAll("\\u0026","&")
+    .replaceAll("\\/","/")
     .replaceAll("&amp;","&");
   const patterns=[
-    /https?:\\/\\/(?:web|stream)\\.kick\\.com\\/[^"'\\s<>]+?\\.m3u8(?:\\?[^"'\\s<>]*)?/gi,
-    /https?:\\/\\/[^"'\\s<>]+\\.m3u8(?:\\?[^"'\\s<>]*)?/gi
+    /https?:\/\/(?:web|stream)\.kick\.com\/[^"'\\s<>]+?\.m3u8(?:\?[^"'\\s<>]*)?/gi,
+    /https?:\/\/[^"'\\s<>]+\.m3u8(?:\?[^"'\\s<>]*)?/gi
   ];
   return [...new Set(patterns.flatMap(re=>[...source.matchAll(re)].map(m=>m[0])))];
 }
@@ -219,7 +219,7 @@ async function discoverKickVodUrl(slug) {
     return manifests[0];
   }
 
-  const ids=[...html.matchAll(/\\/videos\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
+  const ids=[...html.matchAll(/\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
   const unique=[...new Set(ids)];
   if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
   return "https://kick.com/"+slug+"/videos/"+unique[0];
