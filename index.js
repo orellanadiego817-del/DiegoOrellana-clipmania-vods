@@ -205,7 +205,7 @@ function extractKickManifestUrls(text) {
   return [...new Set(patterns.flatMap(re=>[...source.matchAll(re)].map(m=>m[0])))];
 }
 
-async function discoverKickVodUrl(slug) {
+async function discoverKickVodUrl(slug,preferredId="") {
   const headers={
     "User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)",
     "Accept":"text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"
@@ -222,6 +222,7 @@ async function discoverKickVodUrl(slug) {
 
   const ids=[...html.matchAll(/\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
   const unique=[...new Set(ids)];
+  if(preferredId && unique.includes(String(preferredId))) return "https://kick.com/"+slug+"/videos/"+String(preferredId);
   if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
   return "https://kick.com/"+slug+"/videos/"+unique[0];
 }
@@ -315,7 +316,7 @@ async function processKickJob(job) {
   if(job.status==="completed"||job.status==="waiting_publish") return;
   job.updatedAt=Date.now();
   try{
-    if(job.status==="waiting_vod"||!job.vodUrl){job.status="finding_vod";job.vodUrl=await discoverKickVodUrl(job.slug);}
+    if(job.status==="waiting_vod"||!job.vodUrl){job.status="finding_vod";job.vodUrl=await discoverKickVodUrl(job.slug,job.liveId||"");}
     const vodId="kick_"+crypto.createHash("sha1").update(job.vodUrl).digest("hex").slice(0,20);
     let vod=vods.get(vodId);
     if(!vod){
@@ -354,7 +355,7 @@ async function runKickMonitor() {
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
         if(!duplicate){
           const jobId="kickjob_"+crypto.randomUUID();
-          kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
+          kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),liveId:streamer.lastLive?.id||null,status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
           console.log("KICK monitor: VOD pendiente para",streamer.slug,jobId);
         }
       }
