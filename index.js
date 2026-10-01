@@ -24,6 +24,36 @@ const clipLibrary = new Map();
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
+const STATE_FILE = path.join(DATA_DIR, "clipmania-state.json");
+
+function serializeState() {
+  return {
+    vods: Array.from(vods.values()),
+    clips: Array.from(clipLibrary.values()),
+    publications: Array.from(publishHistory.values())
+  };
+}
+
+function saveState() {
+  try {
+    ensureDataDir();
+    const tmp = STATE_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(serializeState(), null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, STATE_FILE);
+  } catch (error) {
+    console.error("No se pudo guardar el estado:", error.message);
+  }
+}
+
+function loadState() {
+  try {
+    ensureDataDir();
+    const data = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    for (const vod of Array.isArray(data.vods) ? data.vods : []) if (vod?.id) vods.set(vod.id, vod);
+    for (const clip of Array.isArray(data.clips) ? data.clips : []) if (clip?.id) clipLibrary.set(clip.id, clip);
+    for (const pub of Array.isArray(data.publications) ? data.publications : []) if (pub?.publishId) publishHistory.set(pub.publishId, pub);
+  } catch {}
+}
 
 function json(res, status, data) {
   res.writeHead(status, {
@@ -51,7 +81,7 @@ nav{margin-bottom:25px}.ok{color:#70e070}.warn{color:#ffd166}
 button{background:#fff;color:#111;border:0;padding:12px 18px;border-radius:10px;font-weight:bold}
 code{background:#222;padding:3px 6px;border-radius:5px}
 </style></head><body>
-<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a></nav>
+<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/vods">VODs</a> | <a href="/clips">Clips</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a></nav>
 <div class="box">${content}</div></body></html>`);
 }
 
@@ -108,6 +138,7 @@ function saveTokens(tokens) {
 }
 
 let tiktokTokens = loadTokens();
+loadState();
 
 function tiktokConfigured() {
   return Boolean(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET && TIKTOK_REDIRECT_URI);
@@ -493,6 +524,65 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    if (req.method === "GET" && route === "/vods") {
+      const list = Array.from(vods.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+      return page(res, "VODs - ClipManiaLatam", `
+        <style>
+          .vod-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+          .vod-form{display:grid;grid-template-columns:2fr 1fr 2fr;gap:10px;background:#151515;border:1px solid #333;border-radius:14px;padding:16px}
+          .vod-form input{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#fff}
+          .vod-list{display:grid;gap:14px;margin-top:20px}.vod-card{background:#151515;border:1px solid #333;border-radius:14px;padding:16px}
+          .vod-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.muted{color:#aaa}.ok{color:#70e070}.warn{color:#ffd166}
+          @media(max-width:700px){.vod-form{grid-template-columns:1fr}}
+        </style>
+        <h1>🎥 VODs</h1>
+        <p>Registra únicamente VODs que tú o el creador autorizado tienen permiso para utilizar.</p>
+        <div class="vod-toolbar"><a href="/panel"><button>← Panel</button></a><a href="/clips"><button>📚 Biblioteca</button></a></div>
+        <form id="vodForm" class="vod-form">
+          <input id="vodTitle" required placeholder="Título del VOD">
+          <input id="vodStreamer" placeholder="Streamer">
+          <input id="vodUrl" required type="url" placeholder="URL HTTPS del VOD">
+          <label style="grid-column:1/-1"><input id="rights" type="checkbox" required> Confirmo que tengo los derechos o autorización para usar este VOD y crear clips.</label>
+          <button type="submit">＋ Registrar VOD</button>
+        </form>
+        <div id="vodList" class="vod-list">
+          ${list.length ? list.map(v=>`
+            <article class="vod-card">
+              <h3>${escapeHtml(v.title)}</h3>
+              <p class="muted">👤 ${escapeHtml(v.streamer||"Sin streamer")} · Estado: ${escapeHtml(v.status||"received")}</p>
+              <p><a href="${escapeHtml(v.url||"#")}" target="_blank" rel="noopener">Abrir VOD original</a></p>
+              <p class="${v.rightsConfirmed?"ok":"warn"}">${v.rightsConfirmed?"✓ Autorización confirmada":"⚠ Falta confirmar autorización"}</p>
+              <div class="vod-actions">
+                <button onclick="generateClips('${escapeHtml(v.id)}')">🎬 Generar candidatos</button>
+                <a href="/clips"><button type="button">📚 Ver biblioteca</button></a>
+                <button onclick="removeVod('${escapeHtml(v.id)}')">🗑️ Eliminar</button>
+              </div>
+            </article>
+          `).join("") : '<div class="vod-card"><h3>No hay VODs</h3><p class="muted">Registra tu primer VOD autorizado arriba.</p></div>'}
+        </div>
+        <script>
+          async function generateClips(id){
+            const count=Number(prompt("¿Cuántos clips candidatos? (1-5)","3")||3);
+            const duration=Number(prompt("Duración de cada clip en segundos (10-60)","30")||30);
+            const r=await fetch("/api/vods/"+encodeURIComponent(id)+"/generate-clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count,duration})});
+            const d=await r.json(); if(!r.ok||!d.ok){alert(d.error||"No se pudieron generar clips");return;}
+            alert("Se generaron "+d.count+" clips candidatos."); location.reload();
+          }
+          async function removeVod(id){
+            if(!confirm("¿Eliminar este VOD y su referencia de la biblioteca?"))return;
+            const r=await fetch("/api/vods/"+encodeURIComponent(id),{method:"DELETE"});
+            const d=await r.json(); if(!r.ok||!d.ok){alert(d.error||"No se pudo eliminar");return;} location.reload();
+          }
+          document.getElementById("vodForm").addEventListener("submit",async e=>{
+            e.preventDefault();
+            const body={title:document.getElementById("vodTitle").value,streamer:document.getElementById("vodStreamer").value,url:document.getElementById("vodUrl").value,rights_confirmed:document.getElementById("rights").checked};
+            const r=await fetch("/api/vods",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+            const d=await r.json(); if(!r.ok||!d.ok){alert(d.error||"No se pudo registrar");return;} e.target.reset(); location.reload();
+          });
+        </script>
+      `);
+    }
+
     if (req.method === "GET" && route === "/clips") {
       return page(res, "Biblioteca de Clips", `
         <style>
@@ -967,7 +1057,7 @@ const server = http.createServer(async (req, res) => {
           <div class="actions">
             <a class="action" href="/tiktok">Conectar / revisar TikTok</a>
             <a class="action secondary" href="/tiktok/publish">Publicar un video</a>
-            <a class="action secondary" href="/api/vods">Ver API de VODs</a>
+            <a class="action secondary" href="/vods">🎥 Gestionar VODs</a><a class="action secondary" href="/clips">📚 Biblioteca de clips</a>
           </div>
         </div>
 
@@ -999,12 +1089,12 @@ const server = http.createServer(async (req, res) => {
         </div>
 
         <div class="card" style="margin-top:14px">
-          <h2>Próximas mejoras</h2>
+          <h2>Automatización</h2>
           <ul>
-            <li>Generación automática de clips a partir de VOD autorizados.</li>
-            <li>Subtítulos y formato vertical para contenido corto.</li>
-            <li>Historial de publicaciones y estados.</li>
-            <li>Preparación para estadísticas y otras plataformas.</li>
+            <li>Generación de candidatos de clips desde VOD autorizados.</li>
+            <li>Biblioteca con búsqueda, filtros, miniaturas y vista previa.</li>
+            <li>Historial de publicaciones y estados de TikTok.</li>
+            <li>Base preparada para subtítulos, formato vertical y otras plataformas.</li>
           </ul>
         </div>
       `);
@@ -1033,6 +1123,7 @@ const server = http.createServer(async (req, res) => {
         updatedAt: new Date().toISOString()
       };
       clipLibrary.set(id, clip);
+      saveState();
       return json(res, 201, { ok: true, clip });
     }
 
@@ -1053,6 +1144,7 @@ const server = http.createServer(async (req, res) => {
         updatedAt: new Date().toISOString()
       };
       clipLibrary.set(id, updated);
+      saveState();
       return json(res, 200, { ok: true, clip: updated });
     }
 
@@ -1060,6 +1152,7 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(route.slice("/api/clips/".length));
       if (!clipLibrary.has(id)) return json(res, 404, { ok: false, error: "Clip no encontrado" });
       clipLibrary.delete(id);
+      saveState();
       return json(res, 200, { ok: true });
     }
 
@@ -1181,6 +1274,7 @@ const server = http.createServer(async (req, res) => {
         const job = { createdAt: Date.now(), videoUrl, title: data.title || "", status: "PROCESSING", publishId };
         publishJobs.set(publishId, job);
         publishHistory.set(publishId, job);
+        saveState();
       }
       return json(res, 200, { ok: true, ...result, publish_id: publishId || null });
     }
@@ -1196,6 +1290,7 @@ const server = http.createServer(async (req, res) => {
         const updated = { ...existing, status, updatedAt: Date.now() };
         publishHistory.set(data.publish_id, updated);
         publishJobs.set(data.publish_id, updated);
+        saveState();
       }
       return json(res, 200, { ok: true, ...statusData });
     }
@@ -1208,17 +1303,22 @@ const server = http.createServer(async (req, res) => {
       const data = JSON.parse(await readBody(req) || "{}");
       if (!data.title) return json(res, 400, { ok: false, error: "Falta el título del VOD" });
       const id = crypto.randomUUID();
+      if (!data.rights_confirmed) return json(res, 400, { ok:false, error:"Debes confirmar que tienes derechos o autorización para usar este VOD." });
+      if (!data.url || !/^https:\/\//i.test(String(data.url))) return json(res, 400, { ok:false, error:"La URL del VOD debe ser HTTPS." });
       const vod = {
         id,
-        title: String(data.title),
-        url: data.url || null,
-        source: data.source || "unknown",
-        streamer: data.streamer || null,
+        title: String(data.title).slice(0,200),
+        url: String(data.url),
+        source: data.source || "manual",
+        streamer: String(data.streamer || "").slice(0,80),
+        rightsConfirmed: true,
         status: "received",
         clips: [],
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
       vods.set(id, vod);
+      saveState();
       return json(res, 201, { ok: true, vod });
     }
 
@@ -1228,11 +1328,26 @@ const server = http.createServer(async (req, res) => {
       if (!vod) return json(res, 404, { ok:false, error:"VOD no encontrado" });
       try {
         const body = await readJson(req);
+        if (!vod.rightsConfirmed) return json(res, 403, { ok:false, error:"Este VOD no tiene confirmación de derechos/autorización." });
         const clips = await generateClipsForVod(vod, body.count, body.duration);
+        saveState();
         return json(res, 201, { ok:true, count:clips.length, clips });
       } catch (error) {
         return json(res, 500, { ok:false, error:error.message || "No se pudieron generar los clips" });
       }
+    }
+
+    if (req.method === "DELETE" && route.startsWith("/api/vods/")) {
+      const id = decodeURIComponent(route.slice("/api/vods/".length));
+      const vod = vods.get(id);
+      if (!vod) return json(res, 404, { ok:false, error:"VOD no encontrado" });
+      for (const clip of Array.from(clipLibrary.values()).filter(c=>c.sourceVodId===id)) {
+        try { fs.unlinkSync(path.join(DATA_DIR,"clips",clip.id+".mp4")); } catch {}
+        clipLibrary.delete(clip.id);
+      }
+      vods.delete(id);
+      saveState();
+      return json(res,200,{ok:true});
     }
 
     if (req.method === "GET" && route.startsWith("/api/vods/")) {
