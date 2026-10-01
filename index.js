@@ -267,7 +267,7 @@ async function runKickMonitor() {
       streamer.live=Boolean(live); streamer.lastCheckedAt=Date.now(); streamer.viewerCount=live?.viewer_count||live?.viewerCount||0; streamer.lastLive=live||streamer.lastLive||null;
       if(wasLive&&!live){
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
-        if(!duplicate) kickJobs.set("kickjob_"+crypto.randomUUID(),{id:"kickjob_"+crypto.randomUUID(),slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
+        if(!duplicate){const jobId="kickjob_"+crypto.randomUUID(); kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});}
       }
       saveState();
     }catch(error){streamer.lastError=error.message;streamer.lastCheckedAt=Date.now();saveState();}
