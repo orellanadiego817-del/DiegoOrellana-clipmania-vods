@@ -194,9 +194,9 @@ async function kickIsLive(userId) {
 
 function extractKickManifestUrls(text) {
   const source=String(text||"")
-    .replace(/\\u0026/g,"&")
-    .replace(/\\\\\//g,"/")
-    .replace(/&amp;/g,"&");
+    .replaceAll("\\\\u0026","&")
+    .replaceAll("\\\\/","/")
+    .replaceAll("&amp;","&");
   const patterns=[
     /https?:\\/\\/(?:web|stream)\\.kick\\.com\\/[^"'\\s<>]+?\\.m3u8(?:\\?[^"'\\s<>]*)?/gi,
     /https?:\\/\\/[^"'\\s<>]+\\.m3u8(?:\\?[^"'\\s<>]*)?/gi
