@@ -15,6 +15,7 @@ const vods = new Map();
 const oauthStates = new Map();
 const publishJobs = new Map();
 const publishHistory = new Map();
+const clipLibrary = new Map();
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
@@ -423,6 +424,67 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    if (req.method === "GET" && route === "/clips") {
+      return page(res, "Biblioteca de Clips", `
+        <style>
+          .clip-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+          .clip-form{display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:10px;background:#151515;border:1px solid #333;border-radius:14px;padding:16px}
+          .clip-form input,.clip-form select{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#fff}
+          .clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;margin-top:20px}
+          .clip-card{background:#151515;border:1px solid #333;border-radius:14px;overflow:hidden}
+          .clip-thumb{width:100%;height:150px;object-fit:cover;background:#222;display:block}
+          .clip-body{padding:14px}.clip-body h3{margin:0 0 8px}.clip-meta{color:#aaa;font-size:13px}
+          .clip-status{display:inline-block;padding:4px 8px;border-radius:999px;background:#292929;margin:8px 0}
+          .clip-actions{display:flex;gap:7px;flex-wrap:wrap}.clip-actions button{font-size:12px}
+          @media(max-width:800px){.clip-form{grid-template-columns:1fr}}
+        </style>
+        <h1>📚 Biblioteca de Clips</h1>
+        <p>Organiza tus clips antes de enviarlos a las plataformas.</p>
+        <div class="clip-toolbar"><a href="/dashboard"><button>← Panel</button></a><button id="refresh">↻ Actualizar</button></div>
+        <form id="clipForm" class="clip-form">
+          <input id="title" placeholder="Título del clip" required>
+          <input id="streamer" placeholder="Streamer">
+          <input id="duration" type="number" min="0" placeholder="Duración (s)">
+          <input id="thumbnail" placeholder="URL de miniatura (opcional)">
+          <input id="videoUrl" placeholder="URL del video (opcional)">
+          <select id="status"><option>Pendiente</option><option>Listo</option><option>Publicado</option></select>
+          <button type="submit">＋ Guardar clip</button>
+        </form>
+        <div id="clips" class="clip-grid"><p>Cargando...</p></div>
+        <script>
+          const esc=v=>String(v??"").replace(/[&<>"\x27]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",\"":"&quot;","\x27":"&#39;"}[c]));
+          async function load(){
+            const r=await fetch("/api/clips"),d=await r.json(),box=document.getElementById("clips");
+            if(!d.ok) return box.innerHTML="<p>No se pudo cargar la biblioteca.</p>";
+            box.innerHTML=d.clips.length?d.clips.map(c=>`
+              <article class="clip-card">
+                ${c.thumbnail?`<img class="clip-thumb" src="${esc(c.thumbnail)}" alt="">`:"<div class="clip-thumb"></div>"}
+                <div class="clip-body">
+                  <h3>${esc(c.title)}</h3>
+                  <div class="clip-meta">${esc(c.streamer||"Sin streamer")} · ${c.duration?esc(c.duration+" s"):"Duración no indicada"}</div>
+                  <div class="clip-status">${esc(c.status)}</div>
+                  <div class="clip-actions">
+                    <button onclick="setStatus('${esc(c.id)}','Pendiente')">Pendiente</button>
+                    <button onclick="setStatus('${esc(c.id)}','Listo')">Listo</button>
+                    <button onclick="setStatus('${esc(c.id)}','Publicado')">Publicado</button>
+                    <button onclick="removeClip('${esc(c.id)}')">Eliminar</button>
+                  </div>
+                </div>
+              </article>`).join(""):"<div class='clip-card'><div class='clip-body'><h3>Biblioteca vacía</h3><p>Crea tu primer clip arriba.</p></div></div>";
+          }
+          async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();}
+          async function removeClip(id){if(!confirm("¿Eliminar este clip?"))return;await fetch("/api/clips/"+encodeURIComponent(id),{method:"DELETE"});load();}
+          document.getElementById("clipForm").addEventListener("submit",async e=>{
+            e.preventDefault();
+            const body={title:title.value,streamer:streamer.value,duration:Number(duration.value||0),thumbnail:thumbnail.value,videoUrl:videoUrl.value,status:status.value};
+            const r=await fetch("/api/clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+            if(r.ok){e.target.reset();status.value="Pendiente";load();}else alert("No se pudo guardar el clip.");
+          });
+          document.getElementById("refresh").addEventListener("click",load);load();
+        </script>
+      `);
+    }
+
     if (req.method === "GET" && route === "/dashboard") {
       return page(res, "Panel de ClipManiaLatam", `
         <style>
@@ -441,11 +503,11 @@ const server = http.createServer(async (req, res) => {
         <div class="dash-grid">
           <div class="dash-card"><h3>TikTok</h3><div id="tiktokStatus" class="dash-value dash-warn">Cargando...</div><p id="tiktokAccount">Consultando cuenta...</p></div>
           <div class="dash-card"><h3>VODs recibidos</h3><div id="vodCount" class="dash-value">—</div><p class="dash-muted">Disponibles en esta sesión.</p></div>
-          <div class="dash-card"><h3>Publicaciones</h3><div id="pubCount" class="dash-value">—</div><p class="dash-muted">Historial de esta sesión.</p></div>
+          <div class="dash-card"><h3>Publicaciones</h3><div id="pubCount" class="dash-value">—</div><p class="dash-muted">Historial de esta sesión.</p></div><div class="dash-card"><h3>Clips</h3><div id="clipCount" class="dash-value">—</div><p class="dash-muted">En la biblioteca.</p></div>
         </div>
         <div class="dash-actions">
           <a href="/tiktok"><button>Administrar TikTok</button></a>
-          <a href="/tiktok/publish"><button>🎬 Publicar un clip</button></a>
+          <a href="/clips"><button>📚 Biblioteca de clips</button></a><a href="/tiktok/publish"><button>🎬 Publicar un clip</button></a>
           <button id="refresh">↻ Actualizar panel</button>
         </div>
         <div id="accountBox" class="dash-card" style="display:none">
@@ -474,7 +536,7 @@ const server = http.createServer(async (req, res) => {
                 document.getElementById("accountBox").style.display="block";
                 document.getElementById("accountDetails").innerHTML="<strong>Usuario:</strong> "+esc(t.creator.username||"No informado")+"<br><strong>Nombre:</strong> "+esc(t.creator.nickname||"No informado")+"<br><strong>Privacidad:</strong> "+esc((t.creator.privacy_options||[]).join(", ")||"No informada")+"<br><strong>Duración máxima:</strong> "+esc(t.creator.max_video_post_duration_sec?t.creator.max_video_post_duration_sec+" s":"No informada");
               }
-              const pubs=d.publications||[];
+              const pubs=d.publications||[]; document.getElementById("clipCount").textContent=d.clip_count??0;
               if(!pubs.length){activity.innerHTML="<p>No hay publicaciones registradas todavía. Publica un clip y aparecerá aquí.</p>";return;}
               activity.innerHTML="<table class=\"dash-table\"><thead><tr><th>Estado</th><th>Contenido</th><th>Publish ID</th><th>Fecha</th></tr></thead><tbody>"+pubs.map(p=>"<tr><td><span class=\"pill\">"+esc(p.status||"PENDIENTE")+"</span></td><td>"+esc(p.title||"Sin título")+"</td><td><code>"+esc(p.publishId||"—")+"</code></td><td>"+esc(new Date(p.createdAt).toLocaleString("es-CO"))+"</td></tr>").join("")+"</tbody></table>";
             }catch(e){activity.innerHTML="<p class=\"dash-warn\">No se pudo cargar el panel: "+esc(e.message)+"</p>";}
@@ -863,6 +925,59 @@ const server = http.createServer(async (req, res) => {
       `);
     }
 
+    if (req.method === "GET" && route === "/api/clips") {
+      return json(res, 200, {
+        ok: true,
+        clips: Array.from(clipLibrary.values())
+          .sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))
+      });
+    }
+
+    if (req.method === "POST" && route === "/api/clips") {
+      const body = await readJson(req);
+      const id = body.id || `clip_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+      const clip = {
+        id,
+        title: String(body.title || "Clip sin título").slice(0, 160),
+        streamer: String(body.streamer || "").slice(0, 80),
+        duration: Number(body.duration || 0),
+        thumbnail: String(body.thumbnail || "").slice(0, 2000),
+        videoUrl: String(body.videoUrl || "").slice(0, 2000),
+        status: ["Pendiente","Listo","Publicado"].includes(body.status) ? body.status : "Pendiente",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      clipLibrary.set(id, clip);
+      return json(res, 201, { ok: true, clip });
+    }
+
+    if (req.method === "PATCH" && route.startsWith("/api/clips/")) {
+      const id = decodeURIComponent(route.slice("/api/clips/".length));
+      const existing = clipLibrary.get(id);
+      if (!existing) return json(res, 404, { ok: false, error: "Clip no encontrado" });
+      const body = await readJson(req);
+      const nextStatus = ["Pendiente","Listo","Publicado"].includes(body.status) ? body.status : existing.status;
+      const updated = {
+        ...existing,
+        title: body.title !== undefined ? String(body.title).slice(0,160) : existing.title,
+        streamer: body.streamer !== undefined ? String(body.streamer).slice(0,80) : existing.streamer,
+        duration: body.duration !== undefined ? Number(body.duration || 0) : existing.duration,
+        thumbnail: body.thumbnail !== undefined ? String(body.thumbnail).slice(0,2000) : existing.thumbnail,
+        videoUrl: body.videoUrl !== undefined ? String(body.videoUrl).slice(0,2000) : existing.videoUrl,
+        status: nextStatus,
+        updatedAt: new Date().toISOString()
+      };
+      clipLibrary.set(id, updated);
+      return json(res, 200, { ok: true, clip: updated });
+    }
+
+    if (req.method === "DELETE" && route.startsWith("/api/clips/")) {
+      const id = decodeURIComponent(route.slice("/api/clips/".length));
+      if (!clipLibrary.has(id)) return json(res, 404, { ok: false, error: "Clip no encontrado" });
+      clipLibrary.delete(id);
+      return json(res, 200, { ok: true });
+    }
+
     if (req.method === "GET" && route === "/api/dashboard") {
       let creator = null;
       let creatorError = null;
@@ -884,7 +999,8 @@ const server = http.createServer(async (req, res) => {
           error: creatorError
         },
         vod_count: vods.size,
-        publications: Array.from(publishHistory.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,50)
+        publications: Array.from(publishHistory.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,50),
+        clip_count: clipLibrary.size
       });
     }
     if (req.method === "GET" && route === "/api/tiktok/status") {
