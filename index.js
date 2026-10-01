@@ -1554,6 +1554,20 @@ const server = http.createServer(async (req, res) => {
       if (!requireAdmin(req,res)) return; const id=decodeURIComponent(route.slice("/api/kick/streamers/".length));const s=kickStreamers.get(id);if(!s)return json(res,404,{ok:false,error:"Streamer no encontrado"});const data=await readJson(req);if(data.enabled!==undefined)s.enabled=Boolean(data.enabled);s.updatedAt=Date.now();kickStreamers.set(id,s);saveState();return json(res,200,{ok:true,streamer:s});
     }
 
+    if (req.method === "GET" && route === "/__test/kick-vod") {
+      const token = String(parsed.searchParams.get("token") || "");
+      if (!process.env.CLIPMANIA_TEST_TOKEN || token !== process.env.CLIPMANIA_TEST_TOKEN) return json(res, 403, {ok:false,error:"No autorizado"});
+      const slug = String(parsed.searchParams.get("slug") || "").trim().toLowerCase();
+      const vodUrl = String(parsed.searchParams.get("vod_url") || "").trim();
+      if (!slug || !/^https:\/\/kick\.com\//i.test(vodUrl)) return json(res,400,{ok:false,error:"slug y vod_url de KICK son obligatorios"});
+      const jobId = "kicktest_"+crypto.randomUUID();
+      const job = {id:jobId,slug,title:"Prueba VOD — "+slug,status:"finding_vod",rightsConfirmed:true,vodUrl,createdAt:Date.now(),updatedAt:Date.now()};
+      kickJobs.set(jobId,job);
+      saveState();
+      await processKickJob(job);
+      return json(res,200,{ok:true,job});
+    }
+
     if (req.method === "GET" && route === "/api/vods") {
       return json(res, 200, { ok: true, count: vods.size, vods: Array.from(vods.values()) });
     }
