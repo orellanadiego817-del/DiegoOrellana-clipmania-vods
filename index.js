@@ -46,11 +46,6 @@ function serializeState() {
 
 function saveState() {
   try {
-    if (req.method === "GET" && route === "/logout") {
-      logoutAdmin(req, res);
-      res.writeHead(302, { Location: "/" });
-      return res.end();
-    }
     ensureDataDir();
     const tmp = STATE_FILE + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(serializeState(), null, 2), { mode: 0o600 });
@@ -724,6 +719,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    if (req.method === "GET" && route === "/logout") {
+      logoutAdmin(req, res);
+      res.writeHead(302, { Location: "/" });
+      return res.end();
+    }
+
     if (req.method === "GET" && route === "/vods") {
       if (!isAdmin(req)) return page(res, "Acceso requerido", '<h1>🔐 Acceso requerido</h1><p>Conecta TikTok para acceder a la gestión de VODs y clips.</p><p><a href="/tiktok"><button>Conectar TikTok</button></a></p>');
       const list = Array.from(vods.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
