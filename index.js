@@ -586,65 +586,26 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && route === "/clips") {
       return page(res, "Biblioteca de Clips", `
         <style>
-          .clip-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
-          .clip-toolbar input,.clip-toolbar select{padding:10px;border-radius:9px;border:1px solid #444;background:#0d0d0d;color:#fff}
-          .clip-form{display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:10px;background:#151515;border:1px solid #333;border-radius:14px;padding:16px}
-          .clip-form input,.clip-form select{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#fff}
-          .clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;margin-top:20px}
-          .clip-card{background:#151515;border:1px solid #333;border-radius:14px;overflow:hidden}
-          .clip-thumb{width:100%;height:160px;object-fit:cover;background:#222;display:block}
-          .clip-placeholder{height:160px;background:#222;display:flex;align-items:center;justify-content:center;font-size:46px}
-          .clip-body{padding:14px}.clip-body h3{margin:0 0 8px}.clip-meta{color:#aaa;font-size:13px;line-height:1.6}
-          .clip-status{display:inline-block;padding:5px 9px;border-radius:999px;background:#292929;margin:9px 0}
-          .clip-actions{display:flex;gap:7px;flex-wrap:wrap}.clip-actions button{font-size:12px}.clip-actions a{text-decoration:none}
-          .clip-summary{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;color:#bbb;font-size:14px}
-          .clip-summary span{background:#151515;border:1px solid #333;border-radius:10px;padding:8px 11px}
-          .empty{background:#151515;border:1px dashed #444;border-radius:14px;padding:24px}
+          .clip-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.clip-toolbar input,.clip-toolbar select{padding:10px;border-radius:9px;border:1px solid #444;background:#0d0d0d;color:#fff}
+          .generator{background:#151515;border:1px solid #333;border-radius:14px;padding:16px;margin:18px 0}.generator-row{display:flex;gap:10px;flex-wrap:wrap}.generator select{flex:1;min-width:220px;padding:11px;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:9px}
+          .clip-form{display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:10px;background:#151515;border:1px solid #333;border-radius:14px;padding:16px}.clip-form input,.clip-form select{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #444;background:#0d0d0d;color:#fff}
+          .clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;margin-top:20px}.clip-card{background:#151515;border:1px solid #333;border-radius:14px;overflow:hidden}.clip-thumb{width:100%;height:160px;object-fit:cover;background:#222;display:block}.clip-placeholder{height:160px;background:#222;display:flex;align-items:center;justify-content:center;font-size:46px}.clip-body{padding:14px}.clip-body h3{margin:0 0 8px}.clip-meta{color:#aaa;font-size:13px;line-height:1.6}.clip-status{display:inline-block;padding:5px 9px;border-radius:999px;background:#292929;margin:9px 0}.clip-actions{display:flex;gap:7px;flex-wrap:wrap}.clip-actions button{font-size:12px}.clip-actions a{text-decoration:none}.clip-summary{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;color:#bbb;font-size:14px}.clip-summary span{background:#151515;border:1px solid #333;border-radius:10px;padding:8px 11px}.empty{background:#151515;border:1px dashed #444;border-radius:14px;padding:24px}.muted{color:#aaa}
           @media(max-width:800px){.clip-form{grid-template-columns:1fr}.clip-toolbar{flex-direction:column;align-items:stretch}}
         </style>
-        <h1>📚 Biblioteca de Clips</h1>
-        <p>Organiza, revisa y prepara tus clips antes de publicarlos.</p>
-        <div class="clip-toolbar">
-          <a href="/dashboard"><button>← Panel</button></a>
-          <button id="refresh">↻ Actualizar</button>
-          <input id="search" type="search" placeholder="🔎 Buscar por título o streamer">
-          <select id="filter"><option value="Todos">Todos los estados</option><option value="Pendiente">Pendiente</option><option value="Listo">Listo</option><option value="Publicado">Publicado</option></select>
-        </div>
+        <h1>📚 Biblioteca de Clips</h1><p>Organiza, revisa y prepara tus clips antes de publicarlos.</p>
+        <div class="generator"><h2>🤖 Generar clips desde un VOD</h2><p class="muted">Selecciona un VOD autorizado. ClipMania creará hasta 3 candidatos de 30 segundos y los guardará automáticamente en esta biblioteca.</p><div class="generator-row"><select id="vodSelect"><option value="">Cargando VODs...</option></select><button id="generate">⚡ Generar clips</button></div><p id="generateResult" class="muted"></p></div>
+        <div class="clip-toolbar"><a href="/dashboard"><button>← Panel</button></a><button id="refresh">↻ Actualizar</button><input id="search" type="search" placeholder="🔎 Buscar por título o streamer"><select id="filter"><option value="Todos">Todos los estados</option><option value="Pendiente">Pendiente</option><option value="Listo">Listo</option><option value="Publicado">Publicado</option></select></div>
         <div id="summary" class="clip-summary"></div>
-        <form id="clipForm" class="clip-form">
-          <input id="title" placeholder="Título del clip" required>
-          <input id="streamer" placeholder="Streamer">
-          <input id="duration" type="number" min="0" placeholder="Duración (s)">
-          <input id="thumbnail" placeholder="URL de miniatura (opcional)">
-          <input id="videoUrl" placeholder="URL del video (opcional)">
-          <select id="status"><option>Pendiente</option><option>Listo</option><option>Publicado</option></select>
-          <button type="submit">＋ Guardar clip</button>
-        </form>
+        <form id="clipForm" class="clip-form"><input id="title" placeholder="Título del clip" required><input id="streamer" placeholder="Streamer"><input id="duration" type="number" min="0" placeholder="Duración (s)"><input id="thumbnail" placeholder="URL de miniatura (opcional)"><input id="videoUrl" placeholder="URL del video (opcional)"><select id="status"><option>Pendiente</option><option>Listo</option><option>Publicado</option></select><button type="submit">＋ Guardar clip</button></form>
         <div id="clips" class="clip-grid"><p>Cargando...</p></div>
         <script>
-          const esc=v=>String(v??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-          let allClips=[];
-          function filtered(){
-            const q=document.getElementById("search").value.trim().toLowerCase();
-            const f=document.getElementById("filter").value;
-            return allClips.filter(c=>{const text=(c.title+" "+(c.streamer||"")).toLowerCase();return (!q||text.includes(q))&&(f==="Todos"||c.status===f);});
-          }
-          function render(){
-            const box=document.getElementById("clips"),list=filtered(),total=allClips.length;
-            const pending=allClips.filter(c=>c.status==="Pendiente").length,ready=allClips.filter(c=>c.status==="Listo").length,published=allClips.filter(c=>c.status==="Publicado").length;
-            document.getElementById("summary").innerHTML="<span>🎬 Total: "+total+"</span><span>⏳ Pendientes: "+pending+"</span><span>✅ Listos: "+ready+"</span><span>📤 Publicados: "+published+"</span>";
-            if(!list.length){box.innerHTML="<div class='empty'><h3>No hay clips que coincidan</h3><p>Prueba otro texto o cambia el filtro.</p></div>";return;}
-            box.innerHTML=list.map(c=>{
-              const media=c.videoUrl?"<video class='clip-thumb' controls playsinline preload='metadata' src='"+esc(c.videoUrl)+"'></video>":(c.thumbnail?"<img class='clip-thumb' src='"+esc(c.thumbnail)+"' alt='Miniatura del clip' loading='lazy'>":"<div class='clip-placeholder'>🎞️</div>");
-              const publish=c.videoUrl?"<a href='/tiktok/publish'><button>🎬 Publicar</button></a>":"";
-              return "<article class='clip-card'>"+media+"<div class='clip-body'><h3>"+esc(c.title)+"</h3><div class='clip-meta'>👤 "+esc(c.streamer||"Sin streamer")+"<br>⏱️ "+(c.duration?esc(c.duration+" s"):"Duración no indicada")+"<br>📅 "+esc(new Date(c.createdAt).toLocaleString("es-CO"))+"</div><div class='clip-status'>"+esc(c.status)+"</div><div class='clip-actions'><button onclick=\"setStatus('"+esc(c.id)+"','Pendiente')\">Pendiente</button><button onclick=\"setStatus('"+esc(c.id)+"','Listo')\">Listo</button><button onclick=\"setStatus('"+esc(c.id)+"','Publicado')\">Publicado</button>"+publish+"<button onclick=\"removeClip('"+esc(c.id)+"')\">Eliminar</button></div></div></article>";
-            }).join("");
-          }
-          async function load(){try{const r=await fetch("/api/clips"),d=await r.json();if(!d.ok)throw new Error(d.error||"No se pudo cargar la biblioteca");allClips=d.clips||[];render();}catch(e){document.getElementById("clips").innerHTML="<div class='empty'><h3>Error</h3><p>"+esc(e.message)+"</p></div>";}}
-          async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();}
-          async function removeClip(id){if(!confirm("¿Eliminar este clip?"))return;await fetch("/api/clips/"+encodeURIComponent(id),{method:"DELETE"});load();}
-          document.getElementById("clipForm").addEventListener("submit",async e=>{e.preventDefault();const body={title:document.getElementById("title").value,streamer:document.getElementById("streamer").value,duration:Number(document.getElementById("duration").value||0),thumbnail:document.getElementById("thumbnail").value,videoUrl:document.getElementById("videoUrl").value,status:document.getElementById("status").value};const r=await fetch("/api/clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(r.ok){e.target.reset();document.getElementById("status").value="Pendiente";load();}else alert("No se pudo guardar el clip.");});
-          document.getElementById("search").addEventListener("input",render);document.getElementById("filter").addEventListener("change",render);document.getElementById("refresh").addEventListener("click",load);load();
+          const esc=v=>String(v??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); let allClips=[];
+          function filtered(){const q=document.getElementById("search").value.trim().toLowerCase(),f=document.getElementById("filter").value;return allClips.filter(c=>{const t=(c.title+" "+(c.streamer||"")).toLowerCase();return(!q||t.includes(q))&&(f==="Todos"||c.status===f);});}
+          function render(){const box=document.getElementById("clips"),list=filtered(),total=allClips.length,pending=allClips.filter(c=>c.status==="Pendiente").length,ready=allClips.filter(c=>c.status==="Listo").length,published=allClips.filter(c=>c.status==="Publicado").length;document.getElementById("summary").innerHTML="<span>🎬 Total: "+total+"</span><span>⏳ Pendientes: "+pending+"</span><span>✅ Listos: "+ready+"</span><span>📤 Publicados: "+published+"</span>";if(!list.length){box.innerHTML="<div class='empty'><h3>No hay clips que coincidan</h3><p>Prueba otro texto o cambia el filtro.</p></div>";return;}box.innerHTML=list.map(c=>{const media=c.videoUrl?"<video class='clip-thumb' controls playsinline preload='metadata' src='"+esc(c.videoUrl)+"'></video>":(c.thumbnail?"<img class='clip-thumb' src='"+esc(c.thumbnail)+"' alt='Miniatura' loading='lazy'>":"<div class='clip-placeholder'>🎞️</div>");const publish=c.videoUrl?"<a href='/tiktok/publish'><button>🎬 Publicar</button></a>":"";return "<article class='clip-card'>"+media+"<div class='clip-body'><h3>"+esc(c.title)+"</h3><div class='clip-meta'>👤 "+esc(c.streamer||"Sin streamer")+"<br>⏱️ "+(c.duration?esc(c.duration+" s"):"Duración no indicada")+"<br>📅 "+esc(new Date(c.createdAt).toLocaleString("es-CO"))+"</div><div class='clip-status'>"+esc(c.status)+"</div><div class='clip-actions'><button onclick=\"setStatus('"+esc(c.id)+"','Pendiente')\">Pendiente</button><button onclick=\"setStatus('"+esc(c.id)+"','Listo')\">Listo</button><button onclick=\"setStatus('"+esc(c.id)+"','Publicado')\">Publicado</button>"+publish+"<button onclick=\"removeClip('"+esc(c.id)+"')\">Eliminar</button></div></div></article>";}).join("");}
+          async function load(){try{const[cr,vr]=await Promise.all([fetch("/api/clips"),fetch("/api/vods")]),d=await cr.json(),v=await vr.json();if(!d.ok)throw new Error(d.error||"No se pudo cargar la biblioteca");allClips=d.clips||[];const select=document.getElementById("vodSelect"),vs=v.vods||[];select.innerHTML=vs.length?'<option value="">Selecciona un VOD autorizado</option>'+vs.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.title)+' — '+esc(x.streamer||"sin streamer")+'</option>').join(""):'<option value="">No hay VODs disponibles</option>';render();}catch(e){document.getElementById("clips").innerHTML="<div class='empty'><h3>Error</h3><p>"+esc(e.message)+"</p></div>";}}
+          document.getElementById("generate").addEventListener("click",async()=>{const id=document.getElementById("vodSelect").value,out=document.getElementById("generateResult"),btn=document.getElementById("generate");if(!id){out.textContent="❌ Selecciona un VOD.";return;}btn.disabled=true;btn.textContent="Generando...";out.textContent="⏳ Procesando el VOD. Puede tardar varios minutos...";try{const r=await fetch("/api/vods/"+encodeURIComponent(id)+"/generate-clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count:3,duration:30})}),d=await r.json();if(!d.ok)throw new Error(d.error||"No se pudieron generar los clips");out.textContent="✅ Se generaron "+d.count+" clips y ya están en la biblioteca.";await load();}catch(e){out.textContent="❌ "+e.message;}finally{btn.disabled=false;btn.textContent="⚡ Generar clips";}});
+          async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();} async function removeClip(id){if(!confirm("¿Eliminar este clip?"))return;await fetch("/api/clips/"+encodeURIComponent(id),{method:"DELETE"});load();}
+          document.getElementById("clipForm").addEventListener("submit",async e=>{e.preventDefault();const body={title:document.getElementById("title").value,streamer:document.getElementById("streamer").value,duration:Number(document.getElementById("duration").value||0),thumbnail:document.getElementById("thumbnail").value,videoUrl:document.getElementById("videoUrl").value,status:document.getElementById("status").value};const r=await fetch("/api/clips",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(r.ok){e.target.reset();document.getElementById("status").value="Pendiente";load();}else alert("No se pudo guardar el clip.");});document.getElementById("search").addEventListener("input",render);document.getElementById("filter").addEventListener("change",render);document.getElementById("refresh").addEventListener("click",load);load();
         </script>
       `);
     }
