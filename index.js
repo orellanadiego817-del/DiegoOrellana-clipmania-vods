@@ -456,23 +456,19 @@ const server = http.createServer(async (req, res) => {
           async function load(){
             const r=await fetch("/api/clips"),d=await r.json(),box=document.getElementById("clips");
             if(!d.ok) return box.innerHTML="<p>No se pudo cargar la biblioteca.</p>";
-            box.innerHTML=d.clips.length?d.clips.map(c=>`
-              <article class="clip-card">
-                ${c.thumbnail?`<img class="clip-thumb" src="${esc(c.thumbnail)}" alt="">`:"<div class="clip-thumb"></div>"}
-                <div class="clip-body">
-                  <h3>${esc(c.title)}</h3>
-                  <div class="clip-meta">${esc(c.streamer||"Sin streamer")} · ${c.duration?esc(c.duration+" s"):"Duración no indicada"}</div>
-                  <div class="clip-status">${esc(c.status)}</div>
-                  <div class="clip-actions">
-                    <button onclick="setStatus('${esc(c.id)}','Pendiente')">Pendiente</button>
-                    <button onclick="setStatus('${esc(c.id)}','Listo')">Listo</button>
-                    <button onclick="setStatus('${esc(c.id)}','Publicado')">Publicado</button>
-                    <button onclick="removeClip('${esc(c.id)}')">Eliminar</button>
-                  </div>
-                </div>
-              </article>`).join(""):"<div class='clip-card'><div class='clip-body'><h3>Biblioteca vacía</h3><p>Crea tu primer clip arriba.</p></div></div>";
+            if(!d.clips.length){box.innerHTML="<div class='clip-card'><div class='clip-body'><h3>Biblioteca vacía</h3><p>Crea tu primer clip arriba.</p></div></div>";return;}
+            box.innerHTML=d.clips.map(c=>"<article class='clip-card'>"+
+              (c.thumbnail?"<img class='clip-thumb' src='"+esc(c.thumbnail)+"' alt=''>":"<div class='clip-thumb'></div>")+
+              "<div class='clip-body'><h3>"+esc(c.title)+"</h3>"+
+              "<div class='clip-meta'>"+esc(c.streamer||"Sin streamer")+" · "+(c.duration?esc(c.duration+" s"):"Duración no indicada")+"</div>"+
+              "<div class='clip-status'>"+esc(c.status)+"</div><div class='clip-actions'>"+
+              "<button onclick=\"setStatus('"+esc(c.id)+"','Pendiente')\">Pendiente</button>"+
+              "<button onclick=\"setStatus('"+esc(c.id)+"','Listo')\">Listo</button>"+
+              "<button onclick=\"setStatus('"+esc(c.id)+"','Publicado')\">Publicado</button>"+
+              "<button onclick=\"removeClip('"+esc(c.id)+"')\">Eliminar</button>"+
+              "</div></div></article>").join("");
           }
-          async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();}
+                    async function setStatus(id,status){await fetch("/api/clips/"+encodeURIComponent(id),{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});load();}
           async function removeClip(id){if(!confirm("¿Eliminar este clip?"))return;await fetch("/api/clips/"+encodeURIComponent(id),{method:"DELETE"});load();}
           document.getElementById("clipForm").addEventListener("submit",async e=>{
             e.preventDefault();
