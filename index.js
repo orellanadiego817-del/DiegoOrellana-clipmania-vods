@@ -15,6 +15,7 @@ const TIKTOK_CLIENT_KEY = String(process.env.TIKTOK_CLIENT_KEY || "").trim();
 const TIKTOK_CLIENT_SECRET = String(process.env.TIKTOK_CLIENT_SECRET || "").trim();
 const TIKTOK_REDIRECT_URI = String(process.env.TIKTOK_REDIRECT_URI || (BASE_URL + "/auth/tiktok/callback")).trim();
 const TIKTOK_SCOPES = String(process.env.TIKTOK_SCOPES || "user.info.basic,video.publish").trim();
+const SESSION_SECRET = String(process.env.SESSION_SECRET || TIKTOK_CLIENT_SECRET || "").trim();
 const KICK_CLIENT_ID = String(process.env.KICK_CLIENT_ID || "").trim();
 const KICK_CLIENT_SECRET = String(process.env.KICK_CLIENT_SECRET || "").trim();
 const KICK_POLL_MS = Math.max(60000, Number(process.env.KICK_POLL_MS || 180000));
@@ -647,17 +648,30 @@ async function generateClipsForVod(vod, count = 3, clipDuration = 30) {
   return created;
 }
 
+function signAdminSession(payload) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+}
 function createAdminSession(res) {
-  const token = crypto.randomBytes(32).toString("hex");
-  adminSessions.set(token, Date.now() + 7 * 24 * 60 * 60 * 1000);
+  if (!SESSION_SECRET) return;
+  const expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const payload = expires + "." + crypto.randomBytes(24).toString("hex");
+  const token = payload + "." + signAdminSession(payload);
+  adminSessions.set(token, expires);
   setCookie(res, "clipmania_session", token, 7 * 24 * 60 * 60);
 }
 function isAdmin(req) {
   const token = parseCookies(req).clipmania_session;
-  const expires = token ? adminSessions.get(token) : null;
-  if (!expires) return false;
-  if (expires < Date.now()) { adminSessions.delete(token); return false; }
-  adminSessions.set(token, Date.now() + 7 * 24 * 60 * 60 * 1000);
+  if (!token || !SESSION_SECRET) return false;
+  const parts = token.split(".");
+  if (parts.length !== 3) return false;
+  const expires = Number(parts[0]);
+  if (!Number.isFinite(expires) || expires < Date.now()) return false;
+  const payload = parts[0] + "." + parts[1];
+  const expected = signAdminSession(payload);
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(parts[2]), Buffer.from(expected))) return false;
+  } catch { return false; }
+  adminSessions.set(token, expires);
   return true;
 }
 function requireAdmin(req, res) {
