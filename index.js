@@ -351,7 +351,7 @@ async function runKickMonitor() {
       streamer.lastCheckedAt=Date.now();
       streamer.viewerCount=live?.viewer_count||live?.viewerCount||0;
       streamer.lastLive=live||streamer.lastLive||null;
-      if(wasLive!==Boolean(live)) console.log("KICK monitor:",streamer.slug,Boolean(live)?"EN VIVO":"OFFLINE");
+      console.log("KICK monitor:",streamer.slug,Boolean(live)?"EN VIVO":"OFFLINE","viewers",streamer.viewerCount,"liveId",live?.id||"");
       if(wasLive&&!live){
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
         if(!duplicate){
