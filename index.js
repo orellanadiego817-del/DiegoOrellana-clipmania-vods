@@ -16,6 +16,7 @@ const oauthStates = new Map();
 const publishJobs = new Map();
 const publishHistory = new Map();
 const clipLibrary = new Map();
+const clipLibrary = new Map();
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
@@ -506,6 +507,7 @@ const server = http.createServer(async (req, res) => {
           <div class="dash-card"><h3>Publicaciones</h3><div id="pubCount" class="dash-value">—</div><p class="dash-muted">Historial de esta sesión.</p></div><div class="dash-card"><h3>Clips</h3><div id="clipCount" class="dash-value">—</div><p class="dash-muted">En la biblioteca.</p></div>
         </div>
         <div class="dash-actions">
+          <a href="/clips"><button>📚 Biblioteca de Clips</button></a>
           <a href="/tiktok"><button>Administrar TikTok</button></a>
           <a href="/clips"><button>📚 Biblioteca de clips</button></a><a href="/tiktok/publish"><button>🎬 Publicar un clip</button></a>
           <button id="refresh">↻ Actualizar panel</button>
