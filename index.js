@@ -44,7 +44,7 @@ nav{margin-bottom:25px}.ok{color:#70e070}.warn{color:#ffd166}
 button{background:#fff;color:#111;border:0;padding:12px 18px;border-radius:10px;font-weight:bold}
 code{background:#222;padding:3px 6px;border-radius:5px}
 </style></head><body>
-<nav><a href="/">Inicio</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a></nav>
+<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a></nav>
 <div class="box">${content}</div></body></html>`);
 }
 
@@ -714,6 +714,86 @@ const server = http.createServer(async (req, res) => {
             }
           });
         </script>
+      `);
+    }
+
+    if (req.method === "GET" && route === "/panel") {
+      const vodList = Array.from(vods.values()).sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const connected = Boolean(tiktokTokens?.access_token);
+      const published = vodList.filter(v => Array.isArray(v.clips) && v.clips.some(cl => cl.status === "published")).length;
+      const ready = vodList.filter(v => Array.isArray(v.clips) && v.clips.length > 0).length;
+      return page(res, "Panel de ClipManiaLatam", `
+        <style>
+          .dashboard{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}
+          .card{background:#151515;border:1px solid #2b2b2b;border-radius:14px;padding:18px}
+          .metric{font-size:28px;font-weight:800;margin-top:5px}
+          .muted{color:#aaa;font-size:14px}
+          .actions{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}
+          .action{display:inline-block;background:#fff;color:#111;text-decoration:none;padding:11px 15px;border-radius:10px;font-weight:700}
+          .action.secondary{background:#292929;color:#fff}
+          .status{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;background:#202020}
+          .dot{width:9px;height:9px;border-radius:50%;background:#777}
+          .dot.ok{background:#70e070}
+          table{width:100%;border-collapse:collapse;margin-top:12px}
+          th,td{text-align:left;padding:10px 7px;border-bottom:1px solid #292929}
+          @media(max-width:760px){.dashboard{grid-template-columns:repeat(2,minmax(0,1fr))}}
+          @media(max-width:480px){.dashboard{grid-template-columns:1fr}}
+        </style>
+        <h1>Panel de ClipManiaLatam</h1>
+        <p class="muted">Centro de control para preparar contenido y revisar el estado de las integraciones.</p>
+
+        <div class="dashboard">
+          <div class="card"><div class="muted">VOD recibidos</div><div class="metric">${vodList.length}</div></div>
+          <div class="card"><div class="muted">VOD con clips</div><div class="metric">${ready}</div></div>
+          <div class="card"><div class="muted">VOD con clips publicados</div><div class="metric">${published}</div></div>
+          <div class="card"><div class="muted">TikTok</div><div class="metric" style="font-size:20px">${connected ? "Conectado" : "No conectado"}</div></div>
+        </div>
+
+        <div class="card">
+          <h2>Acciones rápidas</h2>
+          <div class="actions">
+            <a class="action" href="/tiktok">Conectar / revisar TikTok</a>
+            <a class="action secondary" href="/tiktok/publish">Publicar un video</a>
+            <a class="action secondary" href="/api/vods">Ver API de VODs</a>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h2>Flujo de trabajo</h2>
+          <p><span class="status"><span class="dot ok"></span> 1. Recibir VOD</span></p>
+          <p><span class="status"><span class="dot"></span> 2. Seleccionar o generar clips</span></p>
+          <p><span class="status"><span class="dot"></span> 3. Revisar video, caption y privacidad</span></p>
+          <p><span class="status"><span class="dot"></span> 4. Publicar con autorización del creador</span></p>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h2>VOD recientes</h2>
+          ${vodList.length ? `
+            <table>
+              <thead><tr><th>Título</th><th>Creador</th><th>Estado</th><th>Fecha</th></tr></thead>
+              <tbody>
+                ${vodList.slice(0,10).map(v => `
+                  <tr>
+                    <td>${escapeHtml(v.title)}</td>
+                    <td>${escapeHtml(v.streamer || "—")}</td>
+                    <td>${escapeHtml(v.status || "received")}</td>
+                    <td>${escapeHtml(new Date(v.createdAt).toLocaleString("es-CO"))}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          ` : `<p class="muted">Todavía no hay VOD registrados.</p>`}
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h2>Próximas mejoras</h2>
+          <ul>
+            <li>Generación automática de clips a partir de VOD autorizados.</li>
+            <li>Subtítulos y formato vertical para contenido corto.</li>
+            <li>Historial de publicaciones y estados.</li>
+            <li>Preparación para estadísticas y otras plataformas.</li>
+          </ul>
+        </div>
       `);
     }
 
