@@ -123,6 +123,10 @@ function readBody(req) {
   });
 }
 
+function readJson(req) {
+  return readBody(req).then(body => JSON.parse(body || "{}"));
+}
+
 function parseCookies(req) {
   const out = {};
   for (const part of String(req.headers.cookie || "").split(";")) {
