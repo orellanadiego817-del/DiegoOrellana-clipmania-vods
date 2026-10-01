@@ -192,26 +192,96 @@ async function kickIsLive(userId) {
   return Array.isArray(data.data)?data.data[0]||null:null;
 }
 
+function extractKickManifestUrls(text) {
+  const source=String(text||"")
+    .replace(/\\u0026/g,"&")
+    .replace(/\\\\\//g,"/")
+    .replace(/&amp;/g,"&");
+  const patterns=[
+    /https?:\\/\\/(?:web|stream)\\.kick\\.com\\/[^"'\\s<>]+?\\.m3u8(?:\\?[^"'\\s<>]*)?/gi,
+    /https?:\\/\\/[^"'\\s<>]+\\.m3u8(?:\\?[^"'\\s<>]*)?/gi
+  ];
+  return [...new Set(patterns.flatMap(re=>[...source.matchAll(re)].map(m=>m[0])))];
+}
+
 async function discoverKickVodUrl(slug) {
-  const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)"}});
+  const headers={
+    "User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)",
+    "Accept":"text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"
+  };
+  const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers});
   if(!response.ok) throw new Error("KICK videos respondió "+response.status);
   const html=await response.text();
-  const ids=[...html.matchAll(/\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
+
+  const manifests=extractKickManifestUrls(html);
+  if(manifests.length){
+    console.log("KICK VOD: manifiesto encontrado para",slug);
+    return manifests[0];
+  }
+
+  const ids=[...html.matchAll(/\\/videos\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
   const unique=[...new Set(ids)];
   if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
   return "https://kick.com/"+slug+"/videos/"+unique[0];
 }
 
+async function discoverKickPlaybackUrl(vodUrl) {
+  try {
+    const response=await fetch(vodUrl,{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)","Accept":"text/html,application/xhtml+xml"}});
+    if(!response.ok) return null;
+    const html=await response.text();
+    return extractKickManifestUrls(html)[0]||null;
+  } catch {
+    return null;
+  }
+}
+
 async function downloadKickVod(vodUrl,output) {
   ensureDataDir();
   fs.mkdirSync(path.dirname(output),{recursive:true});
-  const tmp=output+".part";
-  try{fs.unlinkSync(tmp)}catch{}
-  try{
-    await ytDlp(vodUrl,{output:tmp,format:"best[ext=mp4]/best",mergeOutputFormat:"mp4",noWarnings:true,noProgress:true,retries:3,fragmentRetries:3});
-    if(!fs.existsSync(tmp)||fs.statSync(tmp).size<10000) throw new Error("Descarga vacía.");
-    fs.renameSync(tmp,output);
-  }catch(error){try{fs.unlinkSync(tmp)}catch{};throw error;}
+  const dir=path.dirname(output);
+  const base=path.basename(output,".mp4");
+  const tempPrefix=base+".download";
+  const cleanup=()=>{
+    for(const name of fs.readdirSync(dir)){
+      if(name.startsWith(tempPrefix+".")) { try{fs.unlinkSync(path.join(dir,name));}catch{} }
+    }
+  };
+  cleanup();
+
+  const download=async source=>{
+    await ytDlp(source,{
+      output:path.join(dir,tempPrefix+".%(ext)s"),
+      format:"best[ext=mp4]/best",
+      mergeOutputFormat:"mp4",
+      noWarnings:true,
+      noProgress:true,
+      retries:3,
+      fragmentRetries:5,
+      concurrentFragments:2,
+      addHeader:["Referer: https://kick.com/","User-Agent: Mozilla/5.0 (compatible; ClipManiaLatam/1.0)"]
+    });
+    const candidates=fs.readdirSync(dir)
+      .filter(name=>name.startsWith(tempPrefix+".") && !name.endsWith(".part"))
+      .map(name=>path.join(dir,name))
+      .filter(file=>{try{const s=fs.statSync(file);return s.isFile()&&s.size>=10000;}catch{return false;}})
+      .sort((a,b)=>fs.statSync(b).size-fs.statSync(a).size);
+    if(!candidates.length) throw new Error("Descarga vacía.");
+    fs.renameSync(candidates[0],output);
+    for(const file of candidates.slice(1)){try{fs.unlinkSync(file);}catch{}}
+  };
+
+  try {
+    await download(vodUrl);
+  } catch(error) {
+    cleanup();
+    const fallback=await discoverKickPlaybackUrl(vodUrl);
+    if(!fallback) throw error;
+    console.log("KICK VOD: usando manifiesto de reproducción como respaldo.");
+    await download(fallback);
+  } finally {
+    cleanup();
+  }
 }
 
 async function generateClipsFromLocalFile(vod,inputFile,count=3,clipDuration=30) {
