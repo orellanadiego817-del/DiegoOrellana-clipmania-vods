@@ -18,6 +18,7 @@ const TIKTOK_SCOPES = String(process.env.TIKTOK_SCOPES || "user.info.basic,video
 
 const vods = new Map();
 const oauthStates = new Map();
+const adminSessions = new Map();
 const publishJobs = new Map();
 const publishHistory = new Map();
 const clipLibrary = new Map();
@@ -36,6 +37,11 @@ function serializeState() {
 
 function saveState() {
   try {
+    if (req.method === "GET" && route === "/logout") {
+      logoutAdmin(req, res);
+      res.writeHead(302, { Location: "/" });
+      return res.end();
+    }
     ensureDataDir();
     const tmp = STATE_FILE + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(serializeState(), null, 2), { mode: 0o600 });
@@ -81,7 +87,7 @@ nav{margin-bottom:25px}.ok{color:#70e070}.warn{color:#ffd166}
 button{background:#fff;color:#111;border:0;padding:12px 18px;border-radius:10px;font-weight:bold}
 code{background:#222;padding:3px 6px;border-radius:5px}
 </style></head><body>
-<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/vods">VODs</a> | <a href="/clips">Clips</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a></nav>
+<nav><a href="/">Inicio</a> | <a href="/panel">Panel</a> | <a href="/vods">VODs</a> | <a href="/clips">Clips</a> | <a href="/tiktok">TikTok</a> | <a href="/terminos">Términos</a> | <a href="/privacidad">Privacidad</a> | <a href="/logout">Salir</a></nav>
 <div class="box">${content}</div></body></html>`);
 }
 
@@ -498,6 +504,30 @@ async function generateClipsForVod(vod, count = 3, clipDuration = 30) {
   return created;
 }
 
+function createAdminSession(res) {
+  const token = crypto.randomBytes(32).toString("hex");
+  adminSessions.set(token, Date.now() + 7 * 24 * 60 * 60 * 1000);
+  setCookie(res, "clipmania_session", token, 7 * 24 * 60 * 60);
+}
+function isAdmin(req) {
+  const token = parseCookies(req).clipmania_session;
+  const expires = token ? adminSessions.get(token) : null;
+  if (!expires) return false;
+  if (expires < Date.now()) { adminSessions.delete(token); return false; }
+  adminSessions.set(token, Date.now() + 7 * 24 * 60 * 60 * 1000);
+  return true;
+}
+function requireAdmin(req, res) {
+  if (isAdmin(req)) return true;
+  json(res, 401, { ok:false, error:"Sesión requerida. Conecta tu cuenta de TikTok para continuar." });
+  return false;
+}
+function logoutAdmin(req, res) {
+  const token = parseCookies(req).clipmania_session;
+  if (token) adminSessions.delete(token);
+  setCookie(res, "clipmania_session", "", 0);
+}
+ 
 function requireTikTokConfig(res) {
   if (!tiktokConfigured()) {
     json(res, 503, {
@@ -525,6 +555,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && route === "/vods") {
+      if (!isAdmin(req)) return page(res, "Acceso requerido", '<h1>🔐 Acceso requerido</h1><p>Conecta TikTok para acceder a la gestión de VODs y clips.</p><p><a href="/tiktok"><button>Conectar TikTok</button></a></p>');
       const list = Array.from(vods.values()).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
       return page(res, "VODs - ClipManiaLatam", `
         <style>
@@ -584,6 +615,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && route === "/clips") {
+      if (!isAdmin(req)) return page(res, "Acceso requerido", '<h1>🔐 Acceso requerido</h1><p>Conecta TikTok para acceder a la biblioteca de clips.</p><p><a href="/tiktok"><button>Conectar TikTok</button></a></p>');
       return page(res, "Biblioteca de Clips", `
         <style>
           .clip-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.clip-toolbar input,.clip-toolbar select{padding:10px;border-radius:9px;border:1px solid #444;background:#0d0d0d;color:#fff}
@@ -792,12 +824,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { ok: false, error: "OAuth state inválido o expirado" });
       }
       await exchangeCode(code);
+      createAdminSession(res);
       setCookie(res, "tiktok_oauth_state", "", 0);
       res.writeHead(302, { Location: "/tiktok?connected=1" });
       return res.end();
     }
 
     if (req.method === "GET" && route === "/tiktok/publish") {
+      if (!isAdmin(req)) return page(res, "Acceso requerido", '<h1>🔐 Acceso requerido</h1><p>Conecta TikTok para acceder a la publicación.</p><p><a href="/auth/tiktok"><button>Conectar TikTok</button></a></p>');
       if (!requireTikTokConfig(res)) return;
       if (!tiktokTokens?.access_token) {
         return page(res, "Publicar en TikTok", `
@@ -1070,6 +1104,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route === "/api/clips") {
+      if (!requireAdmin(req, res)) return;
       const body = await readJson(req);
       const id = body.id || `clip_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
       const clip = {
@@ -1089,6 +1124,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "PATCH" && route.startsWith("/api/clips/")) {
+      if (!requireAdmin(req, res)) return;
       const id = decodeURIComponent(route.slice("/api/clips/".length));
       const existing = clipLibrary.get(id);
       if (!existing) return json(res, 404, { ok: false, error: "Clip no encontrado" });
@@ -1110,6 +1146,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "DELETE" && route.startsWith("/api/clips/")) {
+      if (!requireAdmin(req, res)) return;
       const id = decodeURIComponent(route.slice("/api/clips/".length));
       if (!clipLibrary.has(id)) return json(res, 404, { ok: false, error: "Clip no encontrado" });
       clipLibrary.delete(id);
@@ -1159,6 +1196,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route === "/api/tiktok/publish-file") {
+      if (!requireAdmin(req, res)) return;
       if (!requireTikTokConfig(res)) return;
       if (!tiktokTokens?.access_token) return json(res, 401, { ok: false, error: "TikTok no está conectado" });
 
@@ -1208,6 +1246,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route === "/api/tiktok/publish") {
+      if (!requireAdmin(req, res)) return;
       if (!requireTikTokConfig(res)) return;
       const data = JSON.parse(await readBody(req) || "{}");
       let videoUrl = data.video_url;
@@ -1241,6 +1280,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route === "/api/tiktok/publish/status") {
+      if (!requireAdmin(req, res)) return;
       if (!requireTikTokConfig(res)) return;
       const data = JSON.parse(await readBody(req) || "{}");
       if (!data.publish_id) return json(res, 400, { ok: false, error: "publish_id es obligatorio" });
@@ -1261,6 +1301,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route === "/api/vods") {
+      if (!requireAdmin(req, res)) return;
       const data = JSON.parse(await readBody(req) || "{}");
       if (!data.title) return json(res, 400, { ok: false, error: "Falta el título del VOD" });
       const id = crypto.randomUUID();
@@ -1284,6 +1325,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && route.startsWith("/api/vods/") && route.endsWith("/generate-clips")) {
+      if (!requireAdmin(req, res)) return;
       const id = decodeURIComponent(route.slice("/api/vods/".length, -"/generate-clips".length));
       const vod = vods.get(id);
       if (!vod) return json(res, 404, { ok:false, error:"VOD no encontrado" });
@@ -1299,6 +1341,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "DELETE" && route.startsWith("/api/vods/")) {
+      if (!requireAdmin(req, res)) return;
       const id = decodeURIComponent(route.slice("/api/vods/".length));
       const vod = vods.get(id);
       if (!vod) return json(res, 404, { ok:false, error:"VOD no encontrado" });
