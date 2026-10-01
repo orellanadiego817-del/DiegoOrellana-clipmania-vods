@@ -687,6 +687,15 @@ const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, BASE_URL);
   const route = parsed.pathname;
 
+  if (req.method === "GET" && route === "/kick/callback") {
+    const code = parsed.searchParams.get("code");
+    const error = parsed.searchParams.get("error");
+    if (error) {
+      return page(res, "KICK — autorización", `<h1>Autorización KICK</h1><p class="warn">KICK devolvió un error: ${escapeHtml(error)}</p><p><a href="/kick"><button>Volver a KICK Auto</button></a></p>`);
+    }
+    return page(res, "KICK — autorización", `<h1>KICK conectado</h1><p>${code ? "KICK devolvió el código de autorización correctamente." : "Esta dirección está lista para recibir la redirección de KICK."}</p><p>ClipManiaLatam utiliza esta ruta como callback oficial de la integración.</p><p><a href="/kick"><button>Volver a KICK Auto</button></a></p>`);
+  }
+
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
