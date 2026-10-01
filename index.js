@@ -198,8 +198,8 @@ function extractKickManifestUrls(text) {
     .replaceAll("\\/","/")
     .replaceAll("&amp;","&");
   const patterns=[
-    /https?:\/\/(?:web|stream)\.kick\.com\/[^"'\s<>]+?\.m3u8(?:\?[^"'\s<>]*)?/gi,
-    /https?:\/\/[^"'\s<>]+\.m3u8(?:\?[^"'\s<>]*)?/gi
+    new RegExp("https?:\\/\\/(?:web|stream)\\.kick\\.com\\/[^" + "'\\s<>]+?\\.m3u8(?:\\?[^" + "'\\s<>]*)?","gi"),
+    new RegExp("https?:\\/\\/[^" + "'\\s<>]+\\.m3u8(?:\\?[^" + "'\\s<>]*)?","gi")
   ];
   return [...new Set(patterns.flatMap(re=>[...source.matchAll(re)].map(m=>m[0])))];
 }
