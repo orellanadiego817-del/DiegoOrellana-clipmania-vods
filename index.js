@@ -16,7 +16,6 @@ const oauthStates = new Map();
 const publishJobs = new Map();
 const publishHistory = new Map();
 const clipLibrary = new Map();
-const clipLibrary = new Map();
 
 const DATA_DIR = path.join(__dirname, "data");
 const TOKEN_FILE = path.join(DATA_DIR, "tiktok-tokens.json");
