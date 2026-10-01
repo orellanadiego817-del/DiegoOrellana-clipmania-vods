@@ -452,7 +452,7 @@ const server = http.createServer(async (req, res) => {
         </form>
         <div id="clips" class="clip-grid"><p>Cargando...</p></div>
         <script>
-          const esc=v=>String(v??"").replace(/[&<>"\x27]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",\"":"&quot;","\x27":"&#39;"}[c]));
+          const esc=v=>String(v??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
           async function load(){
             const r=await fetch("/api/clips"),d=await r.json(),box=document.getElementById("clips");
             if(!d.ok) return box.innerHTML="<p>No se pudo cargar la biblioteca.</p>";
