@@ -254,6 +254,18 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
               }
             }catch(error){ console.log("KICK VOD: web.kick.com video no resolvió HLS para",slug,error.message); }
           }
+          const playbackIds=[...new Set([nestedUuid,match.id].filter(Boolean).map(String))];
+          for(const playbackId of playbackIds){
+            try{
+              const playback=await fetch("https://web.kick.com/api/v1/stream/"+encodeURIComponent(playbackId)+"/playback",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
+              const playbackData=await playback.json().catch(()=>null);
+              const playbackSource=String(playbackData?.source||playbackData?.playback_url||playbackData?.url||playbackData?.data?.source||playbackData?.data?.playback_url||"").trim();
+              if(playback.ok && playbackSource && /\\.m3u8(?:\\?|$)/i.test(playbackSource)){
+                console.log("KICK VOD: HLS obtenido por playback para",slug,match.id);
+                return playbackSource;
+              }
+            }catch(error){ console.log("KICK VOD: playback no resolvió HLS para",slug,playbackId,error.message); }
+          }
           const apiIds=[...new Set([nestedUuid,match.id].filter(Boolean).map(String))];
           for(const apiId of apiIds){
             try{
