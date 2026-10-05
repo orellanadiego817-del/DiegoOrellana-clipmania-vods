@@ -215,6 +215,7 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
   const videoIdOf=item=>String(item?.id||item?.uuid||item?.video_id||item?.video?.uuid||item?.video?.id||"").trim();
   const startOf=item=>item?.start_time||item?.started_at||item?.created_at||item?.video?.start_time||item?.video?.created_at||"";
   const durationOf=item=>Number(item?.duration||item?.video?.duration||0);
+  const sourceOf=item=>String(item?.source||item?.video?.source||item?.playback_url||item?.video?.playback_url||"").trim();
   try {
     const response=await fetch("https://kick.com/api/v2/channels/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
     if(response.ok){
@@ -230,6 +231,23 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
         }
         if(!match) match=videos.slice().sort((a,b)=>Date.parse(b.startedAt||0)-Date.parse(a.startedAt||0))[0];
         if(match?.id){
+          const directSource=sourceOf(match);
+          if(directSource && /\\.m3u8(?:\\?|$)/i.test(directSource)){
+            console.log("KICK VOD: VOD exacto + HLS encontrado para",slug,match.id,match.startedAt||"");
+            return directSource;
+          }
+          const nestedUuid=String(match.item?.video?.uuid||match.item?.uuid||"").trim();
+          if(nestedUuid){
+            try{
+              const detail=await fetch("https://kick.com/api/v1/video/"+encodeURIComponent(nestedUuid),{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
+              const detailData=await detail.json().catch(()=>null);
+              const detailSource=String(detailData?.source||detailData?.livestream?.source||"").trim();
+              if(detail.ok && detailSource && /\\.m3u8(?:\\?|$)/i.test(detailSource)){
+                console.log("KICK VOD: HLS obtenido por API v1 para",slug,match.id);
+                return detailSource;
+              }
+            }catch(error){ console.log("KICK VOD: API v1 no resolvió HLS para",slug,error.message); }
+          }
           const vodUrl="https://kick.com/"+encodeURIComponent(slug)+"/videos/"+match.id;
           console.log("KICK VOD: VOD exacto encontrado para",slug,match.id,match.startedAt||"");
           return vodUrl;
