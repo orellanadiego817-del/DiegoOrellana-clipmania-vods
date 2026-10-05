@@ -215,7 +215,7 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
   const videoIdOf=item=>String(item?.id||item?.uuid||item?.video_id||item?.video?.uuid||item?.video?.id||"").trim();
   const startOf=item=>item?.start_time||item?.started_at||item?.created_at||item?.video?.start_time||item?.video?.created_at||"";
   const durationOf=item=>Number(item?.duration||item?.video?.duration||0);
-  const sourceOf=item=>String(item?.source||item?.video?.source||item?.playback_url||item?.video?.playback_url||"").trim();
+  const sourceOf=item=>String(item?.source||item?.video?.source||item?.item?.source||item?.item?.video?.source||item?.playback_url||item?.item?.playback_url||item?.video?.playback_url||item?.item?.video?.playback_url||"").trim();
   try {
     const response=await fetch("https://kick.com/api/v2/channels/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
     if(response.ok){
