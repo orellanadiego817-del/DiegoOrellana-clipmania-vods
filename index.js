@@ -206,28 +206,51 @@ function extractKickManifestUrls(text) {
   return [...new Set(patterns.flatMap(re=>[...source.matchAll(re)].map(m=>m[0])))];
 }
 
-async function discoverKickVodUrl(slug,preferredId="") {
+async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
   const headers={
-    "User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)",
-    "Accept":"text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"
+    "User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.1)",
+    "Accept":"application/json,text/html,application/xhtml+xml,*/*;q=0.8"
   };
+  const targetMs=preferredStartedAt?Date.parse(preferredStartedAt):NaN;
+  const videoIdOf=item=>String(item?.id||item?.uuid||item?.video_id||item?.video?.uuid||item?.video?.id||"").trim();
+  const startOf=item=>item?.start_time||item?.started_at||item?.created_at||item?.video?.start_time||item?.video?.created_at||"";
+  const durationOf=item=>Number(item?.duration||item?.video?.duration||0);
+  try {
+    const response=await fetch("https://kick.com/api/v2/channels/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
+    if(response.ok){
+      const payload=await response.json().catch(()=>null);
+      const items=Array.isArray(payload)?payload:(Array.isArray(payload?.data)?payload.data:[]);
+      const videos=items.map(item=>({item,id:videoIdOf(item),startedAt:startOf(item),duration:durationOf(item)})).filter(x=>x.id);
+      if(videos.length){
+        let match=preferredId?videos.find(x=>x.id===String(preferredId)):null;
+        if(!match && Number.isFinite(targetMs)){
+          match=videos.filter(x=>Number.isFinite(Date.parse(x.startedAt)))
+            .sort((a,b)=>Math.abs(Date.parse(a.startedAt)-targetMs)-Math.abs(Date.parse(b.startedAt)-targetMs))[0];
+          if(match && Math.abs(Date.parse(match.startedAt)-targetMs)>12*60*60*1000) match=null;
+        }
+        if(!match) match=videos.slice().sort((a,b)=>Date.parse(b.startedAt||0)-Date.parse(a.startedAt||0))[0];
+        if(match?.id){
+          const vodUrl="https://kick.com/"+encodeURIComponent(slug)+"/videos/"+match.id;
+          console.log("KICK VOD: VOD exacto encontrado para",slug,match.id,match.startedAt||"");
+          return vodUrl;
+        }
+      }
+    }
+  } catch(error) {
+    console.log("KICK VOD: API de videos no disponible para",slug,error.message);
+  }
+
   const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
   if(!response.ok) throw new Error("KICK videos respondió "+response.status);
   const html=await response.text();
-
-  const manifests=extractKickManifestUrls(html);
-  if(manifests.length){
-    console.log("KICK VOD: manifiesto encontrado para",slug);
-    return manifests[0];
-  }
-
-  const ids=[...html.matchAll(/\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)].map(m=>m[1]);
+  const ids=[...html.matchAll(/\\/videos\\/((?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{26}))/gi)].map(m=>m[1]);
   const unique=[...new Set(ids)];
-  if(preferredId && unique.includes(String(preferredId))) return "https://kick.com/"+slug+"/videos/"+String(preferredId);
   if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
-  return "https://kick.com/"+slug+"/videos/"+unique[0];
+  const chosen=preferredId&&unique.includes(String(preferredId))?String(preferredId):unique[0];
+  const vodUrl="https://kick.com/"+encodeURIComponent(slug)+"/videos/"+chosen;
+  console.log("KICK VOD: URL de VOD encontrada para",slug,chosen);
+  return vodUrl;
 }
-
 async function discoverKickPlaybackUrl(vodUrl) {
   try {
     const response=await fetch(vodUrl,{headers:{"User-Agent":"Mozilla/5.0 (compatible; ClipManiaLatam/1.0)","Accept":"text/html,application/xhtml+xml"},signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
@@ -317,7 +340,7 @@ async function processKickJob(job) {
   if(job.status==="completed"||job.status==="waiting_publish") return;
   job.updatedAt=Date.now();
   try{
-    if(job.status==="waiting_vod"||!job.vodUrl){job.status="finding_vod";job.vodUrl=await discoverKickVodUrl(job.slug,job.liveId||"");}
+    if(job.status==="waiting_vod"||!job.vodUrl){job.status="finding_vod";job.vodUrl=await discoverKickVodUrl(job.slug,job.vodId||"",job.liveStartedAt||"");}
     const vodId="kick_"+crypto.createHash("sha1").update(job.vodUrl).digest("hex").slice(0,20);
     let vod=vods.get(vodId);
     if(!vod){
@@ -335,7 +358,7 @@ async function processKickJob(job) {
     }
     job.status="waiting_publish"; job.updatedAt=Date.now(); saveState();
   }catch(error){
-    job.attempts=(job.attempts||0)+1; job.lastError=String(error.message||error);
+    job.attempts=(job.attempts||0)+1; job.lastError=String(error.message||error); console.error("KICK job ERROR:",job.id,job.slug,"intento",job.attempts,job.lastError);
     job.status=job.attempts>=8?"failed":"waiting_vod"; job.nextTryAt=Date.now()+Math.min(60*60*1000,Math.max(5*60*1000,job.attempts*5*60*1000)); job.updatedAt=Date.now(); saveState();
   }
 }
@@ -356,7 +379,7 @@ async function runKickMonitor() {
         const duplicate=[...kickJobs.values()].some(j=>j.slug===streamer.slug&&j.status!=="completed"&&j.status!=="failed");
         if(!duplicate){
           const jobId="kickjob_"+crypto.randomUUID();
-          kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),liveId:streamer.lastLive?.id||null,status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
+          kickJobs.set(jobId,{id:jobId,slug:streamer.slug,title:streamer.lastLive?.session_title||("VOD "+streamer.slug),liveId:streamer.lastLive?.id||null,liveStartedAt:streamer.lastLive?.started_at||streamer.lastLive?.start_time||streamer.lastLive?.created_at||null,status:"waiting_vod",rightsConfirmed:streamer.rightsConfirmed===true,createdAt:Date.now(),updatedAt:Date.now()});
           console.log("KICK monitor: VOD pendiente para",streamer.slug,jobId);
         }
       }
