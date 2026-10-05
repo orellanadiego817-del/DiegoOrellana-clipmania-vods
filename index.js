@@ -237,16 +237,17 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
             return directSource;
           }
           const nestedUuid=String(match.item?.video?.uuid||match.item?.uuid||"").trim();
-          if(nestedUuid){
+          const apiIds=[...new Set([nestedUuid,match.id].filter(Boolean).map(String))];
+          for(const apiId of apiIds){
             try{
-              const detail=await fetch("https://kick.com/api/v1/video/"+encodeURIComponent(nestedUuid),{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
+              const detail=await fetch("https://kick.com/api/v1/video/"+encodeURIComponent(apiId),{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
               const detailData=await detail.json().catch(()=>null);
               const detailSource=String(detailData?.source||detailData?.livestream?.source||"").trim();
               if(detail.ok && detailSource && /\\.m3u8(?:\\?|$)/i.test(detailSource)){
                 console.log("KICK VOD: HLS obtenido por API v1 para",slug,match.id);
                 return detailSource;
               }
-            }catch(error){ console.log("KICK VOD: API v1 no resolvió HLS para",slug,error.message); }
+            }catch(error){ console.log("KICK VOD: API v1 no resolvió HLS para",slug,apiId,error.message); }
           }
           const vodUrl="https://kick.com/"+encodeURIComponent(slug)+"/videos/"+match.id;
           console.log("KICK VOD: VOD exacto encontrado para",slug,match.id,match.startedAt||"");
