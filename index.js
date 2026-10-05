@@ -327,7 +327,7 @@ async function downloadKickVod(vodUrl,output) {
   const download=async source=>{
     await ytDlp(source,{
       output:path.join(dir,tempPrefix+".%(ext)s"),
-      format:"best[height<=240][ext=mp4]/best[height<=240]/worst",
+      format:"worst",
       mergeOutputFormat:"mp4",
       noWarnings:true,
       noProgress:true,
