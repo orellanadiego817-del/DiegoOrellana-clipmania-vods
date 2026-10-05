@@ -243,7 +243,7 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
   const response=await fetch("https://kick.com/"+encodeURIComponent(slug)+"/videos",{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
   if(!response.ok) throw new Error("KICK videos respondió "+response.status);
   const html=await response.text();
-  const ids=[...html.matchAll(/\\/videos\\/((?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{26}))/gi)].map(m=>m[1]);
+  const ids=[...html.matchAll(new RegExp("\\/videos\\/((?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{26}))","gi"))].map(m=>m[1]);
   const unique=[...new Set(ids)];
   if(!unique.length) throw new Error("El VOD todavía no aparece en KICK.");
   const chosen=preferredId&&unique.includes(String(preferredId))?String(preferredId):unique[0];
