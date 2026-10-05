@@ -237,6 +237,23 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
             return directSource;
           }
           const nestedUuid=String(match.item?.video?.uuid||match.item?.uuid||"").trim();
+          let channelId="";
+          try{
+            const ch=await kickResolveStreamer(slug);
+            channelId=String(ch?.id||ch?.channel_id||ch?.broadcaster_user_id||"");
+          }catch{}
+          if(channelId){
+            try{
+              const direct=await fetch("https://web.kick.com/api/v1/channels/"+encodeURIComponent(channelId)+"/videos/"+encodeURIComponent(match.id),{headers,signal:AbortSignal.timeout(KICK_FETCH_TIMEOUT_MS)});
+              const directData=await direct.json().catch(()=>null);
+              const directObj=directData?.data||directData;
+              const directSource=String(directObj?.source||directObj?.playback_url||directObj?.stream_url||"").trim();
+              if(direct.ok && directSource && /\\.m3u8(?:\\?|$)/i.test(directSource)){
+                console.log("KICK VOD: HLS obtenido por web.kick.com para",slug,match.id);
+                return directSource;
+              }
+            }catch(error){ console.log("KICK VOD: web.kick.com video no resolvió HLS para",slug,error.message); }
+          }
           const apiIds=[...new Set([nestedUuid,match.id].filter(Boolean).map(String))];
           for(const apiId of apiIds){
             try{
