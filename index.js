@@ -233,7 +233,7 @@ async function discoverKickVodUrl(slug,preferredId="",preferredStartedAt="") {
         if(match?.id){
           console.log("KICK VOD: metadata keys",slug,Object.keys(match.item||{}),Object.keys(match.item?.video||{}),"source",String(match.item?.source||match.item?.video?.source||"").slice(0,180));
           const directSource=sourceOf(match);
-          if(directSource && /\\.m3u8(?:\\?|$)/i.test(directSource)){
+          if(directSource && /\.m3u8(?:\?|$)/i.test(directSource)){
             console.log("KICK VOD: VOD exacto + HLS encontrado para",slug,match.id,match.startedAt||"");
             return directSource;
           }
